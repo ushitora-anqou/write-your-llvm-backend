@@ -1,21 +1,221 @@
-= 自作ISAのためのLLVMバックエンドを書く薄い本（予定）
+= 自作ISAのためのLLVMバックエンドを書く薄い本
 艮 鮟鱇 <ushitora@anqou.net>
 :toc: left
+:icons: font
+
+== FIXME
+
+文中のFIXME他直すべきものをここにリストにする。
+
+* だ・である調をです・ます調に変える。
+
+== この文書について
+
+この文書はAsciiDocを用いて執筆されています。
+
+この文書はGitによって管理され、
+https://github.com/ushitora-anqou/write-your-llvm-backend[GitHubリポジトリにて
+公開されています]。
+
+この作品は、クリエイティブ・コモンズの 表示 4.0 国際 ライセンスで提供されています。ライセンスの写しをご覧になるには、 http://creativecommons.org/licenses/by/4.0/ をご覧頂くか、Creative Commons, PO Box 1866, Mountain View, CA 94042, USA までお手紙をお送りください。
+
+本文書の内容は筆者が独自に調査したものです。
+**疑う余地なく誤りが含まれます**。誤りに気づかれた方はGitHubリポジトリなどを通じて
+ご連絡ください。
 
 == LLVMバックエンド概略
 
-FIXME: 人がLLVMバックエンドを書きたくなるような文章をここに書く。
+本書ではRISC-V風味の独自ISAを例にLLVMバックエンドを開発します。
+
+// FIXME: そのうち10がでそう。
+使用するLLVMのバージョンはv9.0.0です。
+
+// FIXME: 人がLLVMバックエンドを書きたくなるような文章をここに書く。
+
+== ところで
+
+一度もコンパイラを書いたことがない人は、この文書を読む前に
+『低レイヤを知りたい人のためのCコンパイラ作成入門』<<rui-compilerbook>>などで一度
+フルスクラッチからコンパイラを書くことをおすすめします。
+
+また<<krister-writing_gcc_backend>>などを参考に、
+LLVMではなくGCCにバックエンドを追加することも検討してみてはいかがでしょうか。
 
 == 参考にすべき文献
 
+LLVMバックエンドを開発する際に参考にできる書籍やWebサイトを以下に一覧します。
+なおこの文書では、RISC-Vバックエンド及びそれに関する技術資料を**大いに**参考しています。
+
+=== Webページ
+
+* Writing an LLVM Backend<<llvm-writing_backend>>
+** 分かりにくく読みにくい。正直あんまり見ていないが、たまに眺めると有益な情報を見つけたりもする。
+* The LLVM Target-Independent Code Generator<<llvm-code_generator>>
+** <<llvm-writing_backend>>よりもよほど参考になる。LLVMバックエンドがどのようにLLVM IRをアセンブリに落とすかが明記されている。必読。
+* TableGenのLLVMのドキュメント<<llvm-tablegen>>
+** 情報量が少ない。これを読むよりも各種バックエンドのTableGenファイルを読むほうが良い。
+* LLVM Language Reference Manual<<llvm-langref>>
+** LLVM IRについての言語リファレンス。LLVM IRの仕様などを参照できる。必要に応じて読む。
+* Architecture & Platform Information for Compiler Writers<<llvm-compilerwriterinfo>>
+** LLVMで公式に実装されているバックエンドに関するISAの情報が集約されている。Lanaiの言語仕様へのリンクが貴重。
+* RISC-V support for LLVM projects<<github_riscv-llvm>>
+** **どちゃくそに参考になる**。以下の開発はこれに基づいて行う。
+** LLVMにRISC-Vサポートを追加するパッチ群。バックエンドを開発するためのチュートリアルも兼ねているらしく `docs/` 及びそれと対応したpatchが参考になる。
+** またこれについて、開発者が2018 LLVM Developers' Meetingで登壇したときの動画は<<youtube_llvm-backend-development-by-example>>より閲覧できる。スライドは<<speakerdeck-llvm_backend_development>>より閲覧できる。
+** そのときのCoding Labは<<lowrisc-devmtg18>>より閲覧できる。
+* Create an LLVM Backend for the Cpu0 Architecture<<cpu0>>
+** Cpu0という独自アーキテクチャのLLVMバックエンドを作成するチュートリアル。多少古いが、内容が網羅的で参考になる。英語が怪しい。
+* FPGA開発日記<<fpga_develop_diary>>
+** Cpu0の資料<<cpu0>>をもとに1からRISC-Vバックエンドを作成する過程がブログエントリとして公開されている。GitHubに実装も公開されている<<fpga_develop_diary-llvm>>。
+* ELVMバックエンド<<elvm-llvm_backend>>
+** 限られた命令でLLVM IRの機能を達成する例として貴重。でも意外とISAはリッチだったりする。
+** 作成者のスライドも参考になる<<elvm-slide>>。
+* 2018年度東大CPU実験で開発されたLLVM Backend<<todai_llvm_backend>>
+** これについて書かれたAdCのエントリもある<<todai_llvm_backend-article>>。
+* Tutorial: Building a backend in 24 hours<<llvm-anton_korobeynikov_2012>>
+** LLVMバックエンドの大まかな動きについてざっとまとめたあと、 `ret` だけが定義された最低限のLLVMバックエンド ("stub backend") を構成している。
+** Instruction Selection の説明にある *Does bunch of magic and crazy pattern-matching* が好き。
+* 2017 LLVM Developers’ Meeting: M. Braun "Welcome to the back-end: The LLVM machine representation"<<llvm-welcome_to_the_back_end_2017>>
+** スライドも公開されている<<welcome_to_the_back_end-slides>>。
+** 命令選択が終わったあとの中間表現であるLLVM MIR
+（ `MachineFunction` や `MachineInstr` など）や、それに対する操作の解説。
+RegStateやframe index・register scavengerなどの説明が貴重。
+* Howto: Implementing LLVM Integrated Assembler<<ean10-howto-llvmas>>
+** LLVM上でアセンブラを書くためのチュートリアル。アセンブラ単体に焦点を絞ったものは珍しい。
+* Building an LLVM Backend<<LLVMBackend_2015_03_26_v2>>
+** 対応するレポジトリが<<github-frasercrmck_llvm_leg>>にある。
+* [LLVMdev] backend documentation<<llvm_dev_ml-059799>>
+** llvm-devメーリングリストのバックエンドのよいドキュメントは無いかというスレッド。Cpu0とTriCoreが挙げられているが、深くまで記述したものは無いという回答。
+* TriCore Backend<<tricore-llvm>>
+** TriCoreというアーキテクチャ用のバックエンドを書いたという論文。スライドもある<<tricore-llvm-slides>>。ソースコードもGitHub上に上がっているが、どれが公式かわからないfootnote:[論文とスライドも怪しいものだが、著者が一致しているので多分正しいだろう。]。
+* Life of an instruction in LLVM<<life_of_an_instruction>>
+** Cコードからassemblyまでの流れを概観。
+* LLVM Backendの紹介<<llvm_backend_intro>>
+** 「コンパイラ勉強会」footnote:[これとは別の発表で「コンパイラ開発してない人生はFAKE」という名言が飛び出した勉強会<<compiler_study_report>>。]での、LLVMバックエンドの大きな流れ（特に命令選択）について概観した日本語スライド。
+
+=== 書籍
+
+* 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』<<fox-llvm>>
+** 数少ない日本語資料。Passやバックエンドの各クラスについて説明している。<<llvm-code_generator>>と合わせて大まかな流れを掴むのに良い。
+
+なおLLVMについてGoogleで検索していると"LLVM Cookbook"なる謎の書籍（の電子コピー）が
+見つかるが、内容はLLVM公式文書のパクリのようだ<<amazon-llvm_cookbook-customer_review>>。
+
+=== バックエンド
+
+* RISC-V<<riscv>>
+** パッチ群が開発ドキュメントとともに公開されている<<github_riscv-llvm>>。以降の開発はこれをベースに行う。
+* Lanai<<lanai-isa>>
+** Googleが開発した32bit RISCの謎アーキテクチャ。全く実用されていないが、バックエンドが単純に設計されておりコメントも豊富のためかなり参考になるfootnote:[LLVMバックエンドの開発を円滑にするためのアーキテクチャなのではと思うほどに分かりやすい。]。footnote:[後のSparcについて<<llvm_dev_ml-059799>>
+にて指摘されているように、商業的に成功しなかったアーキテクチャほどコードが単純で分かりやすい。]
+* Sparc
+** <<llvm-writing_backend>>でも説明に使われており、コメントが豊富。
+* x86
+** みんな大好きx86。貴重なCISCの資料であり、かつ2オペランド方式を採用する場合に実装例を与えてくれる。あと `EFLAGS` の取り回しなども参考になるが、全体的にコードは読みにくい。ただLLVMの命名規則には従うため、他のバックエンドからある程度推論をして読むのが良い。
+
 == ISAの仕様を決める
 
-=== CAHPv3アーキテクチャ仕様
+本書で使用するISAであるCAHPv3について説明します。
+
+cahpv3.pdfを参考のこと。
+
+// FIXME: 書く
+
+== スケルトンバックエンドを追加する
+
+正常にLLVMのビルドを行うために、何の機能も無いバックエンド（スケルトンバックエンド）を
+LLVMに追加します。
+
+// FIXME: 書く
+
+== LLVMをビルドする
+
+LLVMは巨大なプロジェクトで、ビルドするだけでも一苦労です。
+以下では継続的な開発のために、高速にLLVMをデバッグビルドする手法を紹介します。
+
+ビルドの際には以下のソフトウェアが必要になります。
+
+* `cmake`
+* `ninja`
+* `clang`
+* `clang++`
+* `lld`
+
+まずLLVMのソースコードをGitを用いて取得します。
+前述したように、今回の開発ではLLVM v9.0.0をベースとします。
+そこでブランチ `llvmorg-9.0.0` から独自実装のためのブランチ `cahp` を生成し、
+以降の開発はこのブランチ上で行うことにします。
+
+    $ git clone https://github.com/llvm/llvm-project.git
+    $ cd llvm-project
+    $ git switch llvmorg-9.0.0
+    $ git checkout -b cahp
+
+続いて、ビルドを行うための設定をCMakeを用いて行います。
+大量のオプションはビルドを早くするためのものです<<llvm_dev_ml-106187>>。
+
+    $ mkdir build
+    $ cd build
+    $ cmake -G Ninja \
+        -DLLVM_ENABLE_PROJECTS="clang;lld" \
+        -DCMAKE_BUILD_TYPE="Debug" \
+        -DBUILD_SHARED_LIBS=True \
+        -DLLVM_USE_SPLIT_DWARF=True \
+        -DLLVM_OPTIMIZED_TABLEGEN=True \
+        -DLLVM_BUILD_TESTS=True \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DLLVM_USE_LINKER=lld \
+        -DLLVM_TARGETS_TO_BUILD="" \
+        -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="CAHP" \
+        ../llvm
+
+Ninjaを用いてビルドを行います。直接Ninjaを実行しても構いません（ `$ ninja` ）が、
+CMakeを用いて間接的に実行することもできます。
+
+    $ cmake --build .
+
+ビルドが終了すると `bin/` ディレクトリ以下にコンパイルされたバイナリが生成されます。
+例えば次のようにして、CAHPバックエンドが含まれていることを確認できます。
+
+....
+$ bin/llc --version
+LLVM (http://llvm.org/):
+  LLVM version 9.0.0
+  DEBUG build with assertions.
+  Default target: x86_64-unknown-linux-gnu
+  Host CPU: skylake
+
+  Registered Targets:
+    cahp    - CAHP
+....
+
+[NOTE]
+====
+ここでは開発用にデバッグビルドを行いました。
+一方で、他人に配布する場合などはリリースビルドを行います。
+その際は次のようにCMakeのオプションを指定します。
+
+// FIXME: LLVM_BUILD_TESTS=False で良い気がする。要確認。
+
+    $ cmake -G Ninja \
+        -DLLVM_ENABLE_PROJECTS="lld;clang" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DLLVM_BUILD_TESTS=True \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DLLVM_USE_LINKER=lld \
+        -DLLVM_TARGETS_TO_BUILD="" \
+        -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="CAHP" \
+        ../llvm
+
+====
 
 == アセンブラを作る
 
-=== LLVMをビルドする
-=== スケルトンバックエンドを追加する
+この章ではLLVMバックエンドの一部としてアセンブラを実装します。
+具体的にはLLVMのMCLayerを実装し、アセンブリからオブジェクトファイルへの変換を可能にします。
+
 === 簡易的なアセンブラを実装する
 === `CAHPInstPrinter` を実装する
 === テストを書く
@@ -84,6 +284,165 @@ FIXME: 人がLLVMバックエンドを書きたくなるような文章をここ
 [bibliography]
 == 参考文献
 
-== この文書のライセンス
-
-この作品は、クリエイティブ・コモンズの 表示 4.0 国際 ライセンスで提供されています。ライセンスの写しをご覧になるには、 http://creativecommons.org/licenses/by/4.0/ をご覧頂くか、Creative Commons, PO Box 1866, Mountain View, CA 94042, USA までお手紙をお送りください。
+- [[[github_riscv-llvm_docs_01,1]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/01-intro-and-building-llvm.mkd
+- [[[llvm_getting-started,2]]] https://llvm.org/docs/GettingStarted.html
+- [[[clang_gettings-started,3]]] https://clang.llvm.org/get_started.html
+- [[[asciidoctor_user-manual,4]]] https://asciidoctor.org/docs/user-manual/
+- [[[riscv,5]]] https://riscv.org/
+- [[[riscv_specifications,6]]] https://riscv.org/specifications/
+- [[[fox-llvm,7]]] 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』（柏木 餅子・風薬・矢上 栄一、株式会社インプレス、2013年）
+- [[[github_riscv-llvm_docs_02,8]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/02-starting-the-backend.mkd
+- [[[github_riscv-llvm_patch_02,9]]] https://github.com/lowRISC/riscv-llvm/blob/master/0002-RISCV-Recognise-riscv32-and-riscv64-in-triple-parsin.patch
+- [[[github_riscv-llvm,10]]] https://github.com/lowRISC/riscv-llvm
+- [[[youtube_llvm-backend-development-by-example,11]]] https://www.youtube.com/watch?v=AFaIP-dF-RA
+- [[[msyksphinz_try-riscv64-llvm-backend,12]]] http://msyksphinz.hatenablog.com/entry/2019/01/02/040000_1
+- [[[github_riscv-llvm_patch_03,13]]] https://github.com/lowRISC/riscv-llvm/blob/master/0003-RISCV-Add-RISC-V-ELF-defines.patch
+- [[[github_riscv-llvm_patch_04,14]]] https://github.com/lowRISC/riscv-llvm/blob/master/0004-RISCV-Add-stub-backend.patch
+- [[[github_riscv-llvm_patch_06,15]]] https://github.com/lowRISC/riscv-llvm/blob/master/0006-RISCV-Add-bare-bones-RISC-V-MCTargetDesc.patch
+- [[[github_riscv-llvm_patch_10,16]]] https://github.com/lowRISC/riscv-llvm/blob/master/0010-RISCV-Add-support-for-disassembly.patch
+- [[[llvm-writing_backend-operand_mapping,17]]] https://llvm.org/docs/WritingAnLLVMBackend.html#instruction-operand-mapping
+- [[[llvm-writing_backend,18]]] https://llvm.org/docs/WritingAnLLVMBackend.html
+- [[[github_riscv-llvm_patch_07,19]]] https://github.com/lowRISC/riscv-llvm/blob/master/0007-RISCV-Add-basic-RISCVAsmParser.patch
+- [[[github_riscv-llvm_patch_08,20]]] https://github.com/lowRISC/riscv-llvm/blob/master/0008-RISCV-Add-RISCVInstPrinter-and-basic-MC-assembler-te.patch
+- [[[llvm-tablegen,21]]] https://llvm.org/docs/TableGen/index.html
+- [[[github_riscv-llvm_patch_09,22]]] https://github.com/lowRISC/riscv-llvm/blob/master/0009-RISCV-Add-support-for-all-RV32I-instructions.patch
+- [[[llvm_dev_ml-tablegen_definition_question,23]]] http://lists.llvm.org/pipermail/llvm-dev/2015-December/093310.html
+- [[[llvm_doxygen-twine,24]]] https://llvm.org/doxygen/classllvm_1_1Twine.html
+- [[[llvm-tablegen-langref,25]]] https://llvm.org/docs/TableGen/LangRef.html
+- [[[github_riscv-llvm_docs_05,26]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/05-disassembly.mkd
+- [[[github_riscv-llvm_patch_11,27]]] https://github.com/lowRISC/riscv-llvm/blob/master/0011-RISCV-Add-common-fixups-and-relocations.patch
+- [[[github_riscv-llvm_docs_06,28]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/06-relocations-and-fixups.mkd
+- [[[github_riscv-llvm_patch_13,29]]] https://github.com/lowRISC/riscv-llvm/blob/master/0013-RISCV-Initial-codegen-support-for-ALU-operations.patch
+- [[[speakerdeck-llvm_backend_development,30]]] https://speakerdeck.com/asb/llvm-backend-development-by-example-risc-v
+- [[[llvm-code_generator,31]]] https://llvm.org/docs/CodeGenerator.html
+- [[[llvm-code_generator-target_independent_code_gen_alg,32]]] https://llvm.org/docs/CodeGenerator.html#target-independent-code-generation-algorithms
+- [[[llvm-code_generator-selectiondag_instruction_selection,33]]] https://llvm.org/docs/CodeGenerator.html#selectiondag-instruction-selection-process
+- [[[github_riscv-llvm_patch_15,34]]] https://github.com/lowRISC/riscv-llvm/blob/master/0015-RISCV-Codegen-support-for-memory-operations.patch
+- [[[cpu0,35]]] https://jonathan2251.github.io/lbd/
+- [[[elvm-llvm_backend,36]]] https://github.com/shinh/llvm/tree/elvm
+- [[[elvm-slide,37]]] http://shinh.skr.jp/slide/llel/000.html
+- [[[github_riscv-llvm_patch_16,38]]] https://github.com/lowRISC/riscv-llvm/blob/master/0016-RISCV-Codegen-support-for-memory-operations-on-globa.patch
+- [[[github_riscv-llvm_patch_17,39]]] https://github.com/lowRISC/riscv-llvm/blob/master/0017-RISCV-Codegen-for-conditional-branches.patch
+- [[[todai_llvm_backend,40]]] https://github.com/cpu-experiment-2018-2/llvm/tree/master/lib/Target/ELMO
+- [[[todai_llvm_backend-article,41]]] http://uenoku.hatenablog.com/entry/2018/12/25/044244
+- [[[github_riscv-llvm_patch_18,42]]] https://github.com/lowRISC/riscv-llvm/blob/master/0018-RISCV-Support-for-function-calls.patch
+- [[[llvm-langref,43]]] http://llvm.org/docs/LangRef.html
+- [[[fpga_develop_diary,44]]] http://msyksphinz.hatenablog.com/
+- [[[llvm-anton_korobeynikov_2012,45]]] https://llvm.org/devmtg/2012-04-12/Slides/Workshops/Anton_Korobeynikov.pdf
+- [[[llvm-welcome_to_the_back_end_2017,46]]] https://www.youtube.com/watch?v=objxlZg01D0
+- [[[ean10-howto-llvmas,47]]] https://www.embecosm.com/appnotes/ean10/ean10-howto-llvmas-1.0.html
+- [[[lowrisc-devmtg18,48]]] https://www.lowrisc.org/llvm/devmtg18/
+- [[[LLVMBackend_2015_03_26_v2,49]]] http://www.inf.ed.ac.uk/teaching/courses/ct/other/LLVMBackend-2015-03-26_v2.pdf
+- [[[rui-compilerbook,50]]] https://www.sigbus.info/compilerbook
+- [[[krister-writing_gcc_backend,51]]] https://kristerw.blogspot.com/2017/08/writing-gcc-backend_4.html
+- [[[llvm-ml-129089,52]]] http://lists.llvm.org/pipermail/llvm-dev/2019-January/129089.html
+- [[[llvm-langref-datalayout,53]]] https://llvm.org/docs/LangRef.html#langref-datalayout
+- [[[github-frasercrmck_llvm_leg,54]]] https://github.com/frasercrmck/llvm-leg/tree/master/lib/Target/LEG
+- [[[llvm_doxygen-InitMCRegisterInfo,55]]] https://llvm.org/doxygen/classllvm_1_1MCRegisterInfo.html#a989859615fcb74989b4f978c4d227a03
+- [[[llvm-programmers_manual,56]]] http://llvm.org/docs/ProgrammersManual.html
+- [[[llvm-writing_backend-calling_conventions,57]]] https://llvm.org/docs/WritingAnLLVMBackend.html#calling-conventions
+- [[[riscv-calling,58]]] https://riscv.org/wp-content/uploads/2015/01/riscv-calling.pdf
+- [[[llvm_dev_ml-how_to_debug_instruction_selection,59]]] http://lists.llvm.org/pipermail/llvm-dev/2017-August/116501.html
+- [[[fpga_develop_diary-20190612040000,60]]] http://msyksphinz.hatenablog.com/entry/2019/06/12/040000
+- [[[llvm_dev_ml-br_cc_questions,61]]] http://lists.llvm.org/pipermail/llvm-dev/2014-August/075303.html
+- [[[llvm_dev_ml-multiple_result_instrs,62]]] https://groups.google.com/forum/#!topic/llvm-dev/8kPOj-_lbGk
+- [[[stackoverflow-frame_lowering,63]]] https://stackoverflow.com/questions/32872946/what-is-stack-frame-lowering-in-llvm
+- [[[llvm_dev_ml-selecting_frame_index,64]]] https://groups.google.com/d/msg/llvm-dev/QXwtqgau-jA/PwnHDF0gG_oJ
+- [[[fpga_develop_diary-llvm,65]]] https://github.com/msyksphinz/llvm/tree/myriscvx/impl90/lib/Target/MYRISCVX
+- [[[llvm-github_cd44ae,66]]] https://github.com/llvm/llvm-project/commit/cd44aee3da22f9a618f2e63c226bebf615fa8cf8
+- [[[llvm_phabricator-d43752,67]]] https://reviews.llvm.org/D43752
+- [[[llvm-compilerwriterinfo,68]]] https://llvm.org/docs/CompilerWriterInfo.html
+- [[[wikipedia-The_Gleaners,69]]] https://en.wikipedia.org/wiki/The_Gleaners
+- [[[github_riscv-llvm_patch_20,70]]] https://github.com/lowRISC/riscv-llvm/blob/master/0020-RISCV-Support-and-tests-for-a-variety-of-additional-.patch
+- [[[llvm_phabricator-d47422,71]]] https://reviews.llvm.org/D47422
+- [[[llvm-extendingllvm,72]]] https://llvm.org/docs/ExtendingLLVM.html
+- [[[llvm_dev_ml-001264,73]]] http://lists.llvm.org/pipermail/llvm-dev/2004-June/001264.html
+- [[[llvm_phabricator-d42958,74]]] https://reviews.llvm.org/D42958
+- [[[compiler_rt,75]]] https://compiler-rt.llvm.org/
+- [[[github-riscv_compiler_rt,76]]] https://github.com/andestech/riscv-compiler-rt
+- [[[github_riscv-llvm_patch_27,77]]] https://github.com/lowRISC/riscv-llvm/blob/master/0027-RISCV-Support-stack-frames-and-offsets-up-to-32-bits.patch
+- [[[llvm_phabricator-d44885,78]]] https://reviews.llvm.org/D44885
+- [[[llvm_phabricator-d45859,79]]] https://reviews.llvm.org/D45859
+- [[[llvm-langref-poison_value,80]]] http://llvm.org/docs/LangRef.html#poisonvalues
+- [[[github-emscripten-issues-34,81]]] https://github.com/emscripten-core/emscripten/issues/34
+- [[[switch_lowering_in_llvm,82]]] http://fileadmin.cs.lth.se/cs/education/edan75/part2.pdf
+- [[[github-avr_llvm-issues-88,83]]] https://github.com/avr-llvm/llvm/issues/88
+- [[[asciidoctor-quickref,84]]] https://asciidoctor.org/docs/asciidoc-syntax-quick-reference/
+- [[[llvm_phabricator-d56351,85]]] https://reviews.llvm.org/D56351
+- [[[hatenablog-rhysd-230119,86]]] https://rhysd.hatenablog.com/entry/2017/03/13/230119
+- [[[llvm_dev_ml-115805,87]]] http://lists.llvm.org/pipermail/llvm-dev/2017-July/115805.html
+- [[[github_riscv-llvm_patch_29,88]]] https://github.com/lowRISC/riscv-llvm/blob/master/0029-RISCV-Add-support-for-llvm.-frameaddress-returnaddre.patch
+- [[[github-riscv_llvm-clang,89]]] https://github.com/lowRISC/riscv-llvm/tree/master/clang
+- [[[github-elvm_clang,90]]] https://github.com/shinh/clang/tree/elvm
+- [[[github_riscv-llvm_patch_22,91]]] https://github.com/lowRISC/riscv-llvm/blob/master/0022-RISCV-Support-lowering-FrameIndex.patch
+- [[[llvm_dev_ml-087879,92]]] http://lists.llvm.org/pipermail/llvm-dev/2015-July/087879.html
+- [[[stackoverflow-27467293,93]]] https://stackoverflow.com/questions/27467293/how-to-force-clang-use-llvm-assembler-instead-of-system
+- [[[github-riscv_llvm-clang-03,94]]] https://github.com/lowRISC/riscv-llvm/blob/master/clang/0003-RISCV-Implement-clang-driver-for-the-baremetal-RISCV.patch
+- [[[github_riscv-llvm_patch_25,95]]] https://github.com/lowRISC/riscv-llvm/blob/master/0025-RISCV-Add-custom-CC_RISCV-calling-convention-and-imp.patch
+- [[[llvm_dev_ml-106187,96]]] http://lists.llvm.org/pipermail/llvm-dev/2016-October/106187.html
+- [[[llvm_phabricator-d39322,97]]] https://reviews.llvm.org/D39322
+- [[[cpu0-lld,98]]] http://jonathan2251.github.io/lbt/lld.html
+- [[[youtube-how_to_add_a_new_target_to_lld,99]]] https://www.youtube.com/watch?v=FIXaeRU31Ww
+- [[[llvm-smith_newlldtargetpdf,100]]] https://llvm.org/devmtg/2016-09/slides/Smith-NewLLDTarget.pdf
+- [[[llvm-lld,101]]] https://lld.llvm.org/index.html
+- [[[note-n9948f0cc3ed3,102]]] https://note.mu/ruiu/n/n9948f0cc3ed3
+- [[[lanai-isa,103]]] https://docs.google.com/document/d/1jwAc-Rbw1Mn7Dbn2oEB3-0FQNOwqNPslZa-NDy8wGRo/pub
+- [[[github-blog_os-issues-370,104]]] https://github.com/phil-opp/blog_os/issues/370
+- [[[llvm_phabricator-d61688,105]]] https://reviews.llvm.org/D61688
+- [[[man-xtensa_linux_gnu_ld,106]]] https://linux.die.net/man/1/xtensa-linux-gnu-ld
+- [[[man-elf,107]]] https://linuxjm.osdn.jp/html/LDP_man-pages/man5/elf.5.html
+- [[[llvm_phabricator-d45385,108]]] https://reviews.llvm.org/D45385
+- [[[llvm_phabricator-d47882,109]]] https://reviews.llvm.org/D47882
+- [[[llvm_dev_ml-128257,110]]] https://lists.llvm.org/pipermail/llvm-dev/2018-December/128257.html
+- [[[github_riscv-llvm_patch_31,111]]] https://github.com/lowRISC/riscv-llvm/blob/master/0031-RISCV-Implement-support-for-the-BranchRelaxation-pas.patch
+- [[[github_riscv-llvm_patch_30,112]]] https://github.com/lowRISC/riscv-llvm/blob/master/0030-RISCV-Implement-branch-analysis.patch
+- [[[stackoverflow-5789806,113]]] https://stackoverflow.com/questions/5789806/meaning-of-and-in-c
+- [[[compiler_study_report,114]]] https://proc-cpuinfo.fixstars.com/2018/11/compiler_study_report/
+- [[[github-llvm-bcb36be8e3f5dced36710ba1a2e2206071ccc7ba,115]]] https://github.com/llvm/llvm-project/commit/bcb36be8e3f5dced36710ba1a2e2206071ccc7ba
+- [[[llvm_dev_ml-059799,116]]] http://lists.llvm.org/pipermail/llvm-dev/2013-February/059799.html
+- [[[tricore-llvm-slides,117]]] https://reup.dmcs.pl/wiki/images/7/7a/Tricore-llvm-slides.pdf
+- [[[tricore-llvm,118]]] https://opus4.kobv.de/opus4-fau/files/1108/tricore_llvm.pdf
+- [[[llvm_dev_ml-111697,119]]] http://lists.llvm.org/pipermail/llvm-dev/2017-April/111697.html
+- [[[takayuki-no09,120]]] http://www.ertl.jp/~takayuki/readings/c/no09.html
+- [[[hwenginner-linker,121]]] https://hwengineer.github.io/linker/
+- [[[koikikukan-000300,122]]] http://www.koikikukan.com/archives/2017/04/05-000300.php
+- [[[stackoverflow-57735654_34997577,123]]] https://stackoverflow.com/questions/34997577/linker-script-allocation-of-bss-section#comment57735654_34997577
+- [[[redhat-ld_simple_example,124]]] https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/4/html/Using_ld_the_GNU_Linker/simple-example.html
+- [[[llvm_phabricator-d45395,125]]] https://reviews.llvm.org/D45395
+- [[[llvm_phabricator-d45395-398662,126]]] https://reviews.llvm.org/D45395#inline-398662
+- [[[llvm-langref-inline_asm,127]]] http://llvm.org/docs/LangRef.html#inline-assembler-expressions
+- [[[hazymoon-gcc_inline_asm,128]]] http://caspar.hazymoon.jp/OpenBSD/annex/gcc_inline_asm.html
+- [[[github_riscv-llvm_patch_28,129]]] https://github.com/lowRISC/riscv-llvm/blob/master/0028-RISCV-Add-basic-support-for-inline-asm-constraints.patch
+- [[[llvm-langref-inline_asm-asm_template_argument_modifier,130]]] http://llvm.org/docs/LangRef.html#asm-template-argument-modifiers
+- [[[github-llvm-0715d35ed5ac2312951976bee2a0d2587f98f39f,131]]] https://github.com/llvm/llvm-project/commit/0715d35ed5ac2312951976bee2a0d2587f98f39f
+- [[[github_riscv-llvm_patch_32,132]]] https://github.com/lowRISC/riscv-llvm/blob/master/0032-RISCV-Reserve-an-emergency-spill-slot-for-the-regist.patch
+- [[[github_riscv-llvm_patch_26,133]]] https://github.com/lowRISC/riscv-llvm/blob/master/0026-RISCV-Support-for-varargs.patch
+- [[[github-fracture-wiki-how-dagisel-works,134]]] https://github.com/draperlaboratory/fracture/wiki/How-TableGen%27s-DAGISel-Backend-Works
+- [[[welcome_to_the_back_end-slides,135]]] http://llvm.org/devmtg/2017-10/slides/Braun-Welcome%20to%20the%20Back%20End.pdf
+- [[[life_of_an_instruction,136]]] https://eli.thegreenplace.net/2012/11/24/life-of-an-instruction-in-llvm/
+- [[[shinh-blog-010637,137]]] http://shinh.hatenablog.com/entry/2014/10/03/010637
+- [[[llvm_backend_intro,138]]] https://www.slideshare.net/AkiraMaruoka/llvm-backend
+- [[[amazon-llvm_cookbook-customer_review,139]]] https://www.amazon.co.jp/dp/178528598X#customer_review-R28L2NAL8T9M2H
+- [[[llvm_dev_ml-117139,140]]] https://lists.llvm.org/pipermail/llvm-dev/2017-September/117139.html
+- [[[github_riscv-llvm_patch_85,141]]] https://github.com/lowRISC/riscv-llvm/blob/master/0085-RISCV-Set-AllowRegisterRenaming-1.patch
+- [[[llvm_dev_ml-135337,142]]] https://lists.llvm.org/pipermail/llvm-dev/2019-September/135337.html
+- [[[wikipedia-weak_symbol,143]]] https://en.wikipedia.org/wiki/Weak_symbol
+- [[[wikipedia-remat,144]]] https://en.wikipedia.org/wiki/Rematerialization
+- [[[llvm_phabricator-d46182,145]]] https://reviews.llvm.org/D46182
+- [[[nakata-compiler,146]]] 『コンパイラの構成と最適化（第2版）』（中田育男、朝倉書店、2009）
+- [[[fpga_develop_diary-to_llvm9,147]]] http://msyksphinz.hatenablog.com/entry/2019/08/17/040000
+- [[[llvm_phabricator-d60488,148]]] https://reviews.llvm.org/D60488
+- [[[llvm_phabricator-rl364191,149]]] https://reviews.llvm.org/rL364191
+- [[[llvm_phabricator-d64121,150]]] https://reviews.llvm.org/D64121
+- [[[llvm-codingstandards,151]]] https://llvm.org/docs/CodingStandards.html
+- [[[llvm_dev_ml-134921,152]]] https://lists.llvm.org/pipermail/llvm-dev/2019-September/134921.html
+- [[[llvm_phabricator-d43256,153]]] https://reviews.llvm.org/D43256
+- [[[llvm_dev_ml-114675,154]]] http://lists.llvm.org/pipermail/llvm-dev/2017-June/114675.html
+- [[[llvm_phabricator-d42780,155]]] https://reviews.llvm.org/D42780
+- [[[llvm_phabricator-d51732,156]]] https://reviews.llvm.org/D51732
+- [[[llvm_devmtg-schedmachinemodel,157]]] http://llvm.org/devmtg/2014-10/Slides/Estes-MISchedulerTutorial.pdf
+- [[[llvm_dev_ml-098535,158]]] https://lists.llvm.org/pipermail/llvm-dev/2016-April/098535.html
+- [[[llvm_devmtg-writinggreatsched,159]]] https://www.youtube.com/watch?v=brpomKUynEA
+- [[[anandtech-11441,160]]] https://www.anandtech.com/show/11441/dynamiq-and-arms-new-cpus-cortex-a75-a55/4
+- [[[llvm_devmtg-larintrick,161]]] https://llvm.org/devmtg/2012-11/Larin-Trick-Scheduling.pdf
+- [[[llvm-schedinorder,162]]] https://llvm.org/devmtg/2016-09/slides/Absar-SchedulingInOrder.pdf
