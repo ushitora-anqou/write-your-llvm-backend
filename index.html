@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="generator" content="Asciidoctor 2.0.10">
+<meta name="generator" content="Asciidoctor 2.0.11.dev">
 <meta name="author" content="艮 鮟鱇">
 <title>自作ISAのためのLLVMバックエンドを書く薄い本</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700">
@@ -264,8 +264,8 @@ pre.pygments .lineno::before{content:"";margin-right:-.125em}
 .quoteblock.excerpt .attribution,.quoteblock .quoteblock .attribution{color:inherit;text-align:left;margin-right:0}
 table.tableblock{max-width:100%;border-collapse:separate}
 p.tableblock:last-child{margin-bottom:0}
+td.tableblock>.content{margin-bottom:1.25em}
 td.tableblock>.content>:last-child{margin-bottom:-1.25em}
-td.tableblock>.content>:last-child.sidebarblock{margin-bottom:0}
 table.tableblock,th.tableblock,td.tableblock{border:0 solid #dedede}
 table.grid-all>thead>tr>.tableblock,table.grid-all>tbody>tr>.tableblock{border-width:0 1px 1px 0}
 table.grid-all>tfoot>tr>.tableblock{border-width:1px 1px 0 0}
@@ -386,7 +386,7 @@ a span.icon>.fa{cursor:inherit}
 .admonitionblock td.icon .icon-warning::before{content:"\f071";color:#bf6900}
 .admonitionblock td.icon .icon-caution::before{content:"\f06d";color:#bf3400}
 .admonitionblock td.icon .icon-important::before{content:"\f06a";color:#bf0000}
-.conum[data-value]{display:inline-block;color:#fff!important;background:rgba(0,0,0,.8);-webkit-border-radius:100px;border-radius:100px;text-align:center;font-size:.75em;width:1.67em;height:1.67em;line-height:1.67em;font-family:"Open Sans","DejaVu Sans",sans-serif;font-style:normal;font-weight:bold}
+.conum[data-value]{display:inline-block;color:#fff!important;background:rgba(0,0,0,.8);-webkit-border-radius:50%;border-radius:50%;text-align:center;font-size:.75em;width:1.67em;height:1.67em;line-height:1.67em;font-family:"Open Sans","DejaVu Sans",sans-serif;font-style:normal;font-weight:bold}
 .conum[data-value] *{color:#fff!important}
 .conum[data-value]+b{display:none}
 .conum[data-value]::after{content:attr(data-value)}
@@ -806,7 +806,7 @@ RegStateやframe index・register scavengerなどの説明が貴重。</p>
 <div class="ulist">
 <ul>
 <li>
-<p>「コンパイラ勉強会」<sup class="footnote">[<a id="_footnoteref_2" class="footnote" href="#_footnotedef_2" title="View footnote.">2</a>]</sup></a>。]での、LLVMバックエンドの大きな流れ（特に命令選択）について概観した日本語スライド。</p>
+<p>「コンパイラ勉強会」<sup class="footnote">[<a id="_footnoteref_2" class="footnote" href="#_footnotedef_2" title="View footnote.">2</a>]</sup>での、LLVMバックエンドの大きな流れ（特に命令選択）について概観した日本語スライド。</p>
 </li>
 </ul>
 </div>
@@ -854,8 +854,7 @@ RegStateやframe index・register scavengerなどの説明が貴重。</p>
 <div class="ulist">
 <ul>
 <li>
-<p>Googleが開発した32bit RISCの謎アーキテクチャ。全く実用されていないが、バックエンドが単純に設計されておりコメントも豊富のためかなり参考になる<sup class="footnote">[<a id="_footnoteref_3" class="footnote" href="#_footnotedef_3" title="View footnote.">3</a>]</sup>。<sup class="footnote">[<a id="_footnoteref_4" class="footnote" href="#_footnotedef_4" title="View footnote.">4</a>]</sup></a>
-にて指摘されているように、商業的に成功しなかったアーキテクチャほどコードが単純で分かりやすい。]</p>
+<p>Googleが開発した32bit RISCの謎アーキテクチャ。全く実用されていないが、バックエンドが単純に設計されておりコメントも豊富のためかなり参考になる<sup class="footnote">[<a id="_footnoteref_3" class="footnote" href="#_footnotedef_3" title="View footnote.">3</a>]</sup>。<sup class="footnote">[<a id="_footnoteref_4" class="footnote" href="#_footnotedef_4" title="View footnote.">4</a>]</sup></p>
 </li>
 </ul>
 </div>
@@ -1768,18 +1767,18 @@ LLVM (http://llvm.org/):
 <a href="#_footnoteref_1">1</a>. 論文とスライドも怪しいものだが、著者が一致しているので多分正しいだろう。
 </div>
 <div class="footnote" id="_footnotedef_2">
-<a href="#_footnoteref_2">2</a>. これとは別の発表で「コンパイラ開発してない人生はFAKE」という名言が飛び出した勉強会<a href="#compiler_study_report">[114
+<a href="#_footnoteref_2">2</a>. これとは別の発表で「コンパイラ開発してない人生はFAKE」という名言が飛び出した勉強会<a href="#compiler_study_report">[114]</a>。
 </div>
 <div class="footnote" id="_footnotedef_3">
 <a href="#_footnoteref_3">3</a>. LLVMバックエンドの開発を円滑にするためのアーキテクチャなのではと思うほどに分かりやすい。
 </div>
 <div class="footnote" id="_footnotedef_4">
-<a href="#_footnoteref_4">4</a>. 後のSparcについて<a href="#llvm_dev_ml-059799">[116
+<a href="#_footnoteref_4">4</a>. 後のSparcについて<a href="#llvm_dev_ml-059799">[116]</a> にて指摘されているように、商業的に成功しなかったアーキテクチャほどコードが単純で分かりやすい。
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2020-03-25 08:35:30 UTC
+Last updated 2020-03-25 08:54:38 UTC
 </div>
 </div>
 </body>
