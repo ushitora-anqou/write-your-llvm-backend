@@ -1,0 +1,17 @@
+language: ruby
+branches:
+    only:
+        - master
+script:
+    - git clone https://github.com/asciidoctor/asciidoctor.git
+    - cd asciidoctor
+    - bundle install
+    - cd ..
+    - pwd
+    - mkdir build
+    - asciidoctor/bin/asciidoctor main.asciidoc -o build/index.html
+deploy:
+    provider: pages:git
+    token: $GITHUB_TOKEN
+    edge: true
+    local_dir: build/
