@@ -460,8 +460,15 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 </ul>
 </li>
 <li><a href="#_isaの仕様を決める">ISAの仕様を決める</a></li>
-<li><a href="#_スケルトンバックエンドを追加する">スケルトンバックエンドを追加する</a></li>
+<li><a href="#_スケルトンバックエンドを追加する">スケルトンバックエンドを追加する</a>
+<ul class="sectlevel2">
+<li><a href="#_cahpをtripleに追加する">CAHPをTripleに追加する</a></li>
+<li><a href="#_cahpのelfフォーマットを定義する">CAHPのELFフォーマットを定義する</a></li>
+<li><a href="#_バックエンドを追加する">バックエンドを追加する</a></li>
+</ul>
+</li>
 <li><a href="#_llvmをビルドする">LLVMをビルドする</a></li>
+<li><a href="#_llvmをテストする">LLVMをテストする</a></li>
 <li><a href="#_アセンブラを作る">アセンブラを作る</a>
 <ul class="sectlevel2">
 <li><a href="#_簡易的なアセンブラを実装する">簡易的なアセンブラを実装する</a></li>
@@ -561,9 +568,13 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <p>この文書はAsciiDocを用いて執筆されています。</p>
 </div>
 <div class="paragraph">
-<p>この文書はGitによって管理され、
-<a href="https://github.com/ushitora-anqou/write-your-llvm-backend">GitHubリポジトリにて
-公開されています</a>。</p>
+<p>この文書はGitによって管理されています。
+<a href="https://github.com/ushitora-anqou/write-your-llvm-backend">リポジトリはGitHubにて
+公開しています</a>。</p>
+</div>
+<div class="paragraph">
+<p>この文書に（おおよそ）則って開発されたLLVMバックエンドのソースコードを
+<a href="https://github.com/virtualsecureplatform/llvm-cahp">GitHubリポジトリにて公開しています</a>。</p>
 </div>
 <div class="paragraph">
 <p>この作品は、クリエイティブ・コモンズの 表示 4.0 国際 ライセンスで提供されています。ライセンスの写しをご覧になるには、 <a href="http://creativecommons.org/licenses/by/4.0/" class="bare">http://creativecommons.org/licenses/by/4.0/</a> をご覧頂くか、Creative Commons, PO Box 1866, Mountain View, CA 94042, USA までお手紙をお送りください。</p>
@@ -899,8 +910,53 @@ RegStateやframe index・register scavengerなどの説明が貴重。</p>
 <h2 id="_スケルトンバックエンドを追加する">スケルトンバックエンドを追加する</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>正常にLLVMのビルドを行うために、何の機能も無いバックエンド（スケルトンバックエンド）を
+<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/d0b8dd14570dc9efac09d3c5fd6e8512980fd7b7">d0b8dd14570dc9efac09d3c5fd6e8512980fd7b7</a></p>
+</div>
+<div class="paragraph">
+<p>CAHPのためのビルドを行うために、中身のないバックエンド（スケルトンバックエンド）を
 LLVMに追加します。</p>
+</div>
+<div class="sect2">
+<h3 id="_cahpをtripleに追加する">CAHPをTripleに追加する</h3>
+<div class="paragraph">
+<p><a href="#github_riscv-llvm_docs_02">[8]</a>を参考にして
+CAHPをLLVMに認識させます。LLVMではコンパイル先のターゲットをTripleという単位で
+管理しています。そのTripleの一つとしてCAHPを追加します。</p>
+</div>
+<div class="paragraph">
+<p><code>llvm/include/llvm/ADT/Triple.h</code> や <code>llvm/lib/Support/Triple.cpp</code> などの
+ファイルにTripleが列挙されているため、そこにCAHPを追加します。
+また <code>llvm/unittests/ADT/TripleTest.cpp</code> にTripleが正しく認識されているかをチェックする
+テストを書きます。</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_cahpのelfフォーマットを定義する">CAHPのELFフォーマットを定義する</h3>
+<div class="paragraph">
+<p><a href="#github_riscv-llvm_patch_03">[13]</a>を参考にして、CAHPのためのELFフォーマットを定義します。
+具体的にはCAHPのマシンを表す識別コードや再配置情報などを記述し、
+ELFファイルの出力が動作するようにします。
+ただし独自ISAではそのような情報が決まっていないため、適当にでっちあげます。</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_バックエンドを追加する">バックエンドを追加する</h3>
+<div class="paragraph">
+<p><a href="#github_riscv-llvm_patch_04">[14]</a>を参考に <code>llvm/lib/Target</code> ディレクトリ内に
+<code>CAHP</code> ディレクトリを作成し、最低限必要なファイルを用意します。</p>
+</div>
+<div class="paragraph">
+<p>まずビルドのために <code>CMakeLists.txt</code> と <code>LLVMBuild.txt</code> を用意します。
+またCAHPに関する情報を提供するために
+<code>CAHPTargetInfo.cpp</code> や <code>CAHPTargetMachine.cpp</code> などを記述します。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPTargetMachine.cpp</code> ではdata layoutを文字列で指定します。
+詳細はLLVM IRの言語仕様<a href="#llvm-langref-datalayout">[53]</a>を参考してください。</p>
+</div>
+<div class="paragraph">
+<p>以上で必要最小限のファイルを用意することができました。</p>
+</div>
 </div>
 </div>
 </div>
@@ -909,7 +965,9 @@ LLVMに追加します。</p>
 <div class="sectionbody">
 <div class="paragraph">
 <p>LLVMは巨大なプロジェクトで、ビルドするだけでも一苦労です。
-以下では継続的な開発のために、高速にLLVMをデバッグビルドする手法を紹介します。</p>
+以下では継続的な開発のために、高速にLLVMをデバッグビルドする手法を紹介します。
+<a href="#github_riscv-llvm_docs_01">[1]</a>・<a href="#llvm_getting-started">[2]</a>・<a href="#clang_gettings-started">[3]</a>を
+参考にしています。</p>
 </div>
 <div class="paragraph">
 <p>ビルドの際には以下のソフトウェアが必要になります。</p>
@@ -980,6 +1038,13 @@ CMakeを用いて間接的に実行することもできます。</p>
 </div>
 </div>
 <div class="paragraph">
+<p>手元の環境（CPUはIntel Core i7-8700で6コア12スレッド、RAMは16GB）では
+30分弱でビルドが完了しました。
+また別の環境（CPUはIntel Core i5-7200Uで2コア4スレッド、RAMは8GB）では
+1時間半程度かかりました。以上から類推すると、
+\(n\)コアのCPUを使用する場合およそ\(\frac{180}{n}\)分程度かかるようです。</p>
+</div>
+<div class="paragraph">
 <p>ビルドが終了すると <code>bin/</code> ディレクトリ以下にコンパイルされたバイナリが生成されます。
 例えば次のようにして、CAHPバックエンドが含まれていることを確認できます。</p>
 </div>
@@ -1025,6 +1090,23 @@ LLVM (http://llvm.org/):
 </td>
 </tr>
 </table>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_llvmをテストする">LLVMをテストする</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>llvm-lit</code> を使用してLLVMをテストできます。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ bin/llvm-lit test -s  # 全てのテストを実行する。
+$ bin/llvm-lit -s --filter "Triple" test # Tripleに関するテストを実行する。
+$ bin/llvm-lit -s --filter 'CAHP' test # CAHPを含むテストを実行する。
+$ bin/llvm-lit -as --filter 'CAHP' test # テスト結果を詳細に表示する。
+$ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示する。</pre>
+</div>
 </div>
 </div>
 </div>
@@ -1778,8 +1860,32 @@ LLVM (http://llvm.org/):
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2020-03-25 09:09:12 UTC
+Last updated 2020-03-25 09:55:43 UTC
 </div>
 </div>
+<script type="text/x-mathjax-config">
+MathJax.Hub.Config({
+  messageStyle: "none",
+  tex2jax: {
+    inlineMath: [["\\(", "\\)"]],
+    displayMath: [["\\[", "\\]"]],
+    ignoreClass: "nostem|nolatexmath"
+  },
+  asciimath2jax: {
+    delimiters: [["\\$", "\\$"]],
+    ignoreClass: "nostem|noasciimath"
+  },
+  TeX: { equationNumbers: { autoNumber: "none" } }
+})
+MathJax.Hub.Register.StartupHook("AsciiMath Jax Ready", function () {
+  MathJax.InputJax.AsciiMath.postfilterHooks.Add(function (data, node) {
+    if ((node = data.script.parentNode) && (node = node.parentNode) && node.classList.contains("stemblock")) {
+      data.math.root.display = "block"
+    }
+    return data
+  })
+})
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.6/MathJax.js?config=TeX-MML-AM_HTMLorMML"></script>
 </body>
 </html>
