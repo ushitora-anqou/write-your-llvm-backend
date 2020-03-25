@@ -2,6 +2,7 @@
 艮 鮟鱇 <ushitora@anqou.net>
 :toc: left
 :icons: font
+:stem: latexmath
 
 == FIXME
 
@@ -13,9 +14,12 @@
 
 この文書はAsciiDocを用いて執筆されています。
 
-この文書はGitによって管理され、
-https://github.com/ushitora-anqou/write-your-llvm-backend[GitHubリポジトリにて
-公開されています]。
+この文書はGitによって管理されています。
+https://github.com/ushitora-anqou/write-your-llvm-backend[リポジトリはGitHubにて
+公開しています]。
+
+この文書に（おおよそ）則って開発されたLLVMバックエンドのソースコードを
+https://github.com/virtualsecureplatform/llvm-cahp[GitHubリポジトリにて公開しています]。
 
 この作品は、クリエイティブ・コモンズの 表示 4.0 国際 ライセンスで提供されています。ライセンスの写しをご覧になるには、 http://creativecommons.org/licenses/by/4.0/ をご覧頂くか、Creative Commons, PO Box 1866, Mountain View, CA 94042, USA までお手紙をお送りください。
 
@@ -123,15 +127,51 @@ cahpv3.pdfを参考のこと。
 
 == スケルトンバックエンドを追加する
 
-正常にLLVMのビルドを行うために、何の機能も無いバックエンド（スケルトンバックエンド）を
+https://github.com/virtualsecureplatform/llvm-cahp/commit/d0b8dd14570dc9efac09d3c5fd6e8512980fd7b7[d0b8dd14570dc9efac09d3c5fd6e8512980fd7b7]
+
+CAHPのためのビルドを行うために、中身のないバックエンド（スケルトンバックエンド）を
 LLVMに追加します。
 
-// FIXME: 書く
+=== CAHPをTripleに追加する
+
+<<github_riscv-llvm_docs_02>>を参考にして
+CAHPをLLVMに認識させます。LLVMではコンパイル先のターゲットをTripleという単位で
+管理しています。そのTripleの一つとしてCAHPを追加します。
+
+`llvm/include/llvm/ADT/Triple.h` や `llvm/lib/Support/Triple.cpp` などの
+ファイルにTripleが列挙されているため、そこにCAHPを追加します。
+また `llvm/unittests/ADT/TripleTest.cpp` にTripleが正しく認識されているかをチェックする
+テストを書きます。
+
+=== CAHPのELFフォーマットを定義する
+
+<<github_riscv-llvm_patch_03>>を参考にして、CAHPのためのELFフォーマットを定義します。
+具体的にはCAHPのマシンを表す識別コードや再配置情報などを記述し、
+ELFファイルの出力が動作するようにします。
+ただし独自ISAではそのような情報が決まっていないため、適当にでっちあげます。
+
+=== バックエンドを追加する
+
+<<github_riscv-llvm_patch_04>>を参考に `llvm/lib/Target` ディレクトリ内に
+`CAHP` ディレクトリを作成し、最低限必要なファイルを用意します。
+
+まずビルドのために `CMakeLists.txt` と `LLVMBuild.txt` を用意します。
+またCAHPに関する情報を提供するために
+`CAHPTargetInfo.cpp` や `CAHPTargetMachine.cpp` などを記述します。
+
+`CAHPTargetMachine.cpp` ではdata layoutを文字列で指定します。
+詳細はLLVM IRの言語仕様<<llvm-langref-datalayout>>を参考してください。
+// FIXME: ここで指定するdata layoutが結局の所どの程度影響力を持つのかは良くわからない。
+//        ツール間でのターゲットの識別程度にしか使ってなさそう。要確認。
+
+以上で必要最小限のファイルを用意することができました。
 
 == LLVMをビルドする
 
 LLVMは巨大なプロジェクトで、ビルドするだけでも一苦労です。
 以下では継続的な開発のために、高速にLLVMをデバッグビルドする手法を紹介します。
+<<github_riscv-llvm_docs_01>>・<<llvm_getting-started>>・<<clang_gettings-started>>を
+参考にしています。
 
 ビルドの際には以下のソフトウェアが必要になります。
 
@@ -175,6 +215,12 @@ CMakeを用いて間接的に実行することもできます。
 
     $ cmake --build .
 
+手元の環境（CPUはIntel Core i7-8700で6コア12スレッド、RAMは16GB）では
+30分弱でビルドが完了しました。
+また別の環境（CPUはIntel Core i5-7200Uで2コア4スレッド、RAMは8GB）では
+1時間半程度かかりました。以上から類推すると、
+stem:[n]コアのCPUを使用する場合およそstem:[\frac{180}{n}]分程度かかるようです。
+
 ビルドが終了すると `bin/` ディレクトリ以下にコンパイルされたバイナリが生成されます。
 例えば次のようにして、CAHPバックエンドが含まれていることを確認できます。
 
@@ -210,6 +256,16 @@ LLVM (http://llvm.org/):
         ../llvm
 
 ====
+
+== LLVMをテストする
+
+`llvm-lit` を使用してLLVMをテストできます。
+
+    $ bin/llvm-lit test -s  # 全てのテストを実行する。
+    $ bin/llvm-lit -s --filter "Triple" test # Tripleに関するテストを実行する。
+    $ bin/llvm-lit -s --filter 'CAHP' test # CAHPを含むテストを実行する。
+    $ bin/llvm-lit -as --filter 'CAHP' test # テスト結果を詳細に表示する。
+    $ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示する。
 
 == アセンブラを作る
 
