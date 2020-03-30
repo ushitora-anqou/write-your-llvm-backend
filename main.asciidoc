@@ -1,4 +1,4 @@
-= 自作ISAのためのLLVMバックエンドを書く薄い本
+= 手を動かせばできるLLVMバックエンド チュートリアル
 艮 鮟鱇 <ushitora@anqou.net>
 :toc: left
 :icons: font
@@ -6,7 +6,8 @@
 
 == FIXME
 
-文中のFIXME他直すべきものをここにリストにする。
+AsciiDocのコメントを用いて文中にFIXMEを仕込む。
+その他のFIXME（全般的なものなど）をここにリストにする。
 
 * だ・である調をです・ます調に変える。
 
@@ -271,8 +272,21 @@ LLVM (http://llvm.org/):
 
 この章ではLLVMバックエンドの一部としてアセンブラを実装します。
 具体的にはLLVMのMCLayerを実装し、アセンブリからオブジェクトファイルへの変換を可能にします。
+一度にアセンブラ全体を作るのは難しいため、まずレジスタのみを使用する演算命令に絞って実装し、
+その後メモリを使用する命令をカバーします。
 
-=== 簡易的なアセンブラを実装する
+=== TableGenファイルを追加する
+
+LLVMのDSLであるTableGenを使用してCAHPのレジスタや命令について記述します。
+追加スべきTableGenファイルはおおよそ次のとおりです。
+
+* `CAHPRegisterInfo.td`: レジスタを定義。
+* `CAHPInstrFormats.td`: 命令形式を定義。
+* `CAHPInstrInfo.td`: 命令を定義。
+* `CAHP.td`: 全体に関することを定義。
+
+=== `MCTargetDesc` を追加する
+=== `CAHPAsmParser` を追加する
 === `CAHPInstPrinter` を実装する
 === テストを書く
 === メモリ演算を追加する
