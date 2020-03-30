@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="generator" content="Asciidoctor 2.0.11.dev">
 <meta name="author" content="艮 鮟鱇">
-<title>自作ISAのためのLLVMバックエンドを書く薄い本</title>
+<title>手を動かせばできるLLVMバックエンド チュートリアル</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700">
 <style>
 /* Asciidoctor default stylesheet | MIT License | https://asciidoctor.org */
@@ -440,7 +440,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 </head>
 <body class="article toc2 toc-left">
 <div id="header">
-<h1>自作ISAのためのLLVMバックエンドを書く薄い本</h1>
+<h1>手を動かせばできるLLVMバックエンド チュートリアル</h1>
 <div class="details">
 <span id="author" class="author">艮 鮟鱇</span><br>
 <span id="email" class="email"><a href="mailto:ushitora@anqou.net">ushitora@anqou.net</a></span><br>
@@ -471,7 +471,9 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#_llvmをテストする">LLVMをテストする</a></li>
 <li><a href="#_アセンブラを作る">アセンブラを作る</a>
 <ul class="sectlevel2">
-<li><a href="#_簡易的なアセンブラを実装する">簡易的なアセンブラを実装する</a></li>
+<li><a href="#_tablegenファイルを追加する">TableGenファイルを追加する</a></li>
+<li><a href="#_mctargetdesc_を追加する"><code>MCTargetDesc</code> を追加する</a></li>
+<li><a href="#_cahpasmparser_を追加する"><code>CAHPAsmParser</code> を追加する</a></li>
 <li><a href="#_cahpinstprinter_を実装する"><code>CAHPInstPrinter</code> を実装する</a></li>
 <li><a href="#_テストを書く">テストを書く</a></li>
 <li><a href="#_メモリ演算を追加する">メモリ演算を追加する</a></li>
@@ -550,7 +552,8 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <h2 id="_fixme">FIXME</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>文中のFIXME他直すべきものをここにリストにする。</p>
+<p>AsciiDocのコメントを用いて文中にFIXMEを仕込む。
+その他のFIXME（全般的なものなど）をここにリストにする。</p>
 </div>
 <div class="ulist">
 <ul>
@@ -1115,10 +1118,39 @@ $ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示す
 <div class="sectionbody">
 <div class="paragraph">
 <p>この章ではLLVMバックエンドの一部としてアセンブラを実装します。
-具体的にはLLVMのMCLayerを実装し、アセンブリからオブジェクトファイルへの変換を可能にします。</p>
+具体的にはLLVMのMCLayerを実装し、アセンブリからオブジェクトファイルへの変換を可能にします。
+一度にアセンブラ全体を作るのは難しいため、まずレジスタのみを使用する演算命令に絞って実装し、
+その後メモリを使用する命令をカバーします。</p>
 </div>
 <div class="sect2">
-<h3 id="_簡易的なアセンブラを実装する">簡易的なアセンブラを実装する</h3>
+<h3 id="_tablegenファイルを追加する">TableGenファイルを追加する</h3>
+<div class="paragraph">
+<p>LLVMのDSLであるTableGenを使用してCAHPのレジスタや命令について記述します。
+追加スべきTableGenファイルはおおよそ次のとおりです。</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>CAHPRegisterInfo.td</code>: レジスタを定義。</p>
+</li>
+<li>
+<p><code>CAHPInstrFormats.td</code>: 命令形式を定義。</p>
+</li>
+<li>
+<p><code>CAHPInstrInfo.td</code>: 命令を定義。</p>
+</li>
+<li>
+<p><code>CAHP.td</code>: 全体に関することを定義。</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_mctargetdesc_を追加する"><code>MCTargetDesc</code> を追加する</h3>
+
+</div>
+<div class="sect2">
+<h3 id="_cahpasmparser_を追加する"><code>CAHPAsmParser</code> を追加する</h3>
 
 </div>
 <div class="sect2">
@@ -1860,7 +1892,7 @@ $ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示す
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2020-03-25 09:55:43 UTC
+Last updated 2020-03-30 13:26:24 UTC
 </div>
 </div>
 <script type="text/x-mathjax-config">
