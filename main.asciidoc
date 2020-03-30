@@ -10,6 +10,9 @@ AsciiDocのコメントを用いて文中にFIXMEを仕込む。
 その他のFIXME（全般的なものなど）をここにリストにする。
 
 * だ・である調をです・ます調に変える。
+* 実際にやってみる。
+** 現状過去の作業ログを切り貼りしながら書いているので通してちゃんと動くかは良くわからない。
+** ついでにLLVM v10.0.0に対応させる。
 
 == この文書について
 
@@ -22,7 +25,8 @@ https://github.com/ushitora-anqou/write-your-llvm-backend[リポジトリはGitH
 この文書に（おおよそ）則って開発されたLLVMバックエンドのソースコードを
 https://github.com/virtualsecureplatform/llvm-cahp[GitHubリポジトリにて公開しています]。
 
-この作品は、クリエイティブ・コモンズの 表示 4.0 国際 ライセンスで提供されています。ライセンスの写しをご覧になるには、 http://creativecommons.org/licenses/by/4.0/ をご覧頂くか、Creative Commons, PO Box 1866, Mountain View, CA 94042, USA までお手紙をお送りください。
+この作品は、クリエイティブ・コモンズの 表示 4.0 国際 ライセンスで提供されています。ライセンスの写しをご覧になるには、 http://creativecommons.org/licenses/by/4.0/ をご覧頂くか、Creative Commons, PO Box 1866, Mountain View, CA 94042, USA までお手紙をお送りくださいfootnote:[この
+段落はクリエイティブ・コモンズより引用。]。
 
 本文書の内容は筆者が独自に調査したものです。
 **疑う余地なく誤りが含まれます**。誤りに気づかれた方はGitHubリポジトリなどを通じて
@@ -102,6 +106,7 @@ RegStateやframe index・register scavengerなどの説明が貴重。
 
 * 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』<<fox-llvm>>
 ** 数少ない日本語資料。Passやバックエンドの各クラスについて説明している。<<llvm-code_generator>>と合わせて大まかな流れを掴むのに良い。
+** ただし書籍中で作成されているバックエンドは機能が制限されており、またコードベースも多少古い。
 
 なおLLVMについてGoogleで検索していると"LLVM Cookbook"なる謎の書籍（の電子コピー）が
 見つかるが、内容はLLVM公式文書のパクリのようだ<<amazon-llvm_cookbook-customer_review>>。
@@ -270,6 +275,8 @@ LLVM (http://llvm.org/):
 
 == アセンブラを作る
 
+https://github.com/virtualsecureplatform/llvm-cahp/commit/2c31c0a80020cc50bba6df1c35da228905190d97[2c31c0a80020cc50bba6df1c35da228905190d97]
+
 この章ではLLVMバックエンドの一部としてアセンブラを実装します。
 具体的にはLLVMのMCLayerを実装し、アセンブリからオブジェクトファイルへの変換を可能にします。
 一度にアセンブラ全体を作るのは難しいため、まずレジスタのみを使用する演算命令に絞って実装し、
@@ -277,13 +284,151 @@ LLVM (http://llvm.org/):
 
 === TableGenファイルを追加する
 
-LLVMのDSLであるTableGenを使用してCAHPのレジスタや命令について記述します。
-追加スべきTableGenファイルはおおよそ次のとおりです。
+LLVM coreは基本的にC++ によって記述されています。一方で、多くの箇所で共通する処理などは
+独自のDSL（ドメイン固有言語）であるTableGenを用いて記述し `llvm-tblgen` という
+ソフトウェアを用いてこれをC++ コードに変換しています。
+こうすることによって記述量を減らし、ヒューマンエラーを少なくするという考え方
+のようです<<llvm-tablegen>>。
 
+LLVMバックエンドでは、アーキテクチャが持つレジスタや命令などの情報をTableGenによって
+記述します。大まかに言って、TableGenで書ける場所はTableGenによって書き、
+対応できない部分をC++ で直に書くというのがLLVM coreの方針のようです。
+// FIXME: 単なる印象。ほんまか？
+ここでは、簡単なアセンブラを実装するために最低限必要なTableGenファイルを追加します。
+内訳は次のとおりです。
+
+* `CAHP.td`: 下のTableGenファイルをincludeし、その他もろもろを定義。
 * `CAHPRegisterInfo.td`: レジスタを定義。
 * `CAHPInstrFormats.td`: 命令形式を定義。
 * `CAHPInstrInfo.td`: 命令を定義。
-* `CAHP.td`: 全体に関することを定義。
+
+順に説明します。 `CAHP.td` がTableGenファイル全体をまとめているTableGenファイルで、
+内部では `include` を使って他のファイルを読み込んでいます。
+
+    include "llvm/Target/Target.td"
+
+    include "CAHPRegisterInfo.td"
+    include "CAHPInstrInfo.td"
+
+また同時に、今回想定するプロセッサを表す `ProcessorModel` や、
+現在実装しているターゲットの `CAHP` について定義しています。
+// FIXME: ここの定義が具体的にC++コードにどう反映されるかの確認が必要。
+//        まぁこう書いておけば問題ないという認識でもとりあえず良い気もするけど……。
+
+`CAHPRegisterInfo.td` ではCAHPに存在するレジスタを定義します。
+まず `Register` を継承して `class CAHPReg` を作り、これに基本的なレジスタの性質をもたせます。
+ついで `class CAHPReg` の実体として `X0` から `X15` を作成します。
+`alt` にはレジスタの別名を指定します。
+// FIXME: ABIRegAltName がどういう役割を果たしてるのか要検証。
+//        多分 `getRegisterName` の第二引数に何も渡さなかったときにAltNameを表示
+//        させるのに必要なんだと思うけど、裏をとってない。
+最後に、レジスタをまとめて `RegisterClass` である `GPR`
+（General Purpose Register; 汎用レジスタの意）を定義します。
+このあと命令を定義する際にはこの `RegisterClass` 単位で指定します。
+ここでレジスタを並べる順番が先であるほどレジスタ割り付けで割り付けられやすいため、
+caller-savedなもの（使ってもspill outが起こりにくいもの）を先に並べておきます。
+
+`GPR` と同様に `SP` という `RegisterClass` も作成し、 `X1` 、
+つまりスタックポインタを表すレジスタのみを追加しておきます。
+この `RegisterClass` を命令のオペランドに指定することで
+`lwsp` や `swsp` などの「スタックポインタのみを取る命令」を表現することができます。
+
+命令は `CAHPInstrFormats.td` と `CAHPInstrInfo.td` に分けて記述します。
+`CAHPInstrFormats.td` ではおおよその命令の「形」を定義しておき、
+`CAHPInstrInfo.td` でそれを具体化します。言葉で言ってもわかりにくいので、コードで見ます。
+例えば24bit長の加算命令は次のように定義されます。
+まずCAHPの命令全体に共通する事項を `class CAHPInst` として定義します。
+
+....
+class CAHPInst<dag outs, dag ins, string opcodestr, string argstr, list<dag> pattern = []>
+: Instruction {
+  let Namespace = "CAHP";
+
+  dag OutOperandList = outs;
+  dag InOperandList = ins;
+
+  let AsmString = opcodestr # "\t" # argstr;
+
+  // Matching patterns used when converting SelectionDAG into MachineDAG.
+  let Pattern = pattern;
+}
+....
+
+次に、CAHPの24bit命令に共通する事項を `class CAHPInst` を継承した
+`class CAHP24Inst` として定義します。
+
+....
+// 24-bit instruction format.
+class CAHPInst24<dag outs, dag ins, string opcodestr, string argstr, list<dag> pattern = []>
+: CAHPInst<outs, ins, opcodestr, argstr, pattern> {
+  let Size = 3;
+  bits<24> Inst;
+}
+....
+
+さらに、24bit長加算命令の「形」である24bit R形式（オペランドにレジスタを3つとる）を
+`class CAHPInst24R` として定義します。 `class CAHPInst24` を継承します。
+
+....
+// 24-bit R-instruction format.
+class CAHPInst24R<bits<8> opcode, dag outs, dag ins, string opcodestr, string argstr>
+: CAHPInst24<outs, ins, opcodestr, argstr> {
+  bits<4> rd;
+  bits<4> rs1;
+  bits<4> rs2;
+
+  let Inst{23-20} = 0;
+  let Inst{19-16} = rs2;
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-0} = opcode;
+}
+....
+
+最後にこれを使って加算命令 `ADD` を定義します。
+
+....
+def ADD : CAHPInst24R<0b00000001, (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                      "add", "$rd, $rs1, $rs2">;
+....
+
+上記の継承による構造を展開すると、結局 `class Instruction` を使って
+次のような定義を行ったことになります。
+// FIXME: 要確認。
+
+....
+def ADD : Instruction {
+  let Namespace = "CAHP";
+
+  let Pattern = [];
+
+  let Size = 3; // 命令長は8bit * 3 = 24bit
+  bits<24> Inst;
+
+  bits<4> rd;  // オペランドrdは4bit
+  bits<4> rs1; // オペランドrs1は4bit
+  bits<4> rs2; // オペランドrs2は4bit
+
+  // 命令のエンコーディングは次の通り。
+  let Inst{23-20} = 0;
+  let Inst{19-16} = rs2;
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-0} = 0b00000001;
+
+  // 出力はレジスタクラスGPRのrdに入る。
+  dag OutOperandList = (outs GPR:$rd);
+  // 入力はレジスタクラスGPRのrs1とrs2に入る。
+  dag InOperandList = (ins GPR:$rs1, GPR:$rs2);
+
+  // アセンブリ上では「add rd, rs1, rs2」という形で与えられる。
+  let AsmString = "add\t$rd, $rs1, $rs2";
+}
+....
+
+// FIXME: `AsmString` は出力とパーズの両方に使われるっぽい。要確認。
+
+// FIXME: 即値の取り回しについて書く
 
 === `MCTargetDesc` を追加する
 === `CAHPAsmParser` を追加する
