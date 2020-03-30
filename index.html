@@ -560,6 +560,19 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li>
 <p>だ・である調をです・ます調に変える。</p>
 </li>
+<li>
+<p>実際にやってみる。</p>
+<div class="ulist">
+<ul>
+<li>
+<p>現状過去の作業ログを切り貼りしながら書いているので通してちゃんと動くかは良くわからない。</p>
+</li>
+<li>
+<p>ついでにLLVM v10.0.0に対応させる。</p>
+</li>
+</ul>
+</div>
+</li>
 </ul>
 </div>
 </div>
@@ -580,7 +593,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <a href="https://github.com/virtualsecureplatform/llvm-cahp">GitHubリポジトリにて公開しています</a>。</p>
 </div>
 <div class="paragraph">
-<p>この作品は、クリエイティブ・コモンズの 表示 4.0 国際 ライセンスで提供されています。ライセンスの写しをご覧になるには、 <a href="http://creativecommons.org/licenses/by/4.0/" class="bare">http://creativecommons.org/licenses/by/4.0/</a> をご覧頂くか、Creative Commons, PO Box 1866, Mountain View, CA 94042, USA までお手紙をお送りください。</p>
+<p>この作品は、クリエイティブ・コモンズの 表示 4.0 国際 ライセンスで提供されています。ライセンスの写しをご覧になるには、 <a href="http://creativecommons.org/licenses/by/4.0/" class="bare">http://creativecommons.org/licenses/by/4.0/</a> をご覧頂くか、Creative Commons, PO Box 1866, Mountain View, CA 94042, USA までお手紙をお送りください<sup class="footnote">[<a id="_footnoteref_1" class="footnote" href="#_footnotedef_1" title="View footnote.">1</a>]</sup>。</p>
 </div>
 <div class="paragraph">
 <p>本文書の内容は筆者が独自に調査したものです。
@@ -800,7 +813,7 @@ RegStateやframe index・register scavengerなどの説明が貴重。</p>
 <div class="ulist">
 <ul>
 <li>
-<p>TriCoreというアーキテクチャ用のバックエンドを書いたという論文。スライドもある<a href="#tricore-llvm-slides">[117]</a>。ソースコードもGitHub上に上がっているが、どれが公式かわからない<sup class="footnote">[<a id="_footnoteref_1" class="footnote" href="#_footnotedef_1" title="View footnote.">1</a>]</sup>。</p>
+<p>TriCoreというアーキテクチャ用のバックエンドを書いたという論文。スライドもある<a href="#tricore-llvm-slides">[117]</a>。ソースコードもGitHub上に上がっているが、どれが公式かわからない<sup class="footnote">[<a id="_footnoteref_2" class="footnote" href="#_footnotedef_2" title="View footnote.">2</a>]</sup>。</p>
 </li>
 </ul>
 </div>
@@ -820,7 +833,7 @@ RegStateやframe index・register scavengerなどの説明が貴重。</p>
 <div class="ulist">
 <ul>
 <li>
-<p>「コンパイラ勉強会」<sup class="footnote">[<a id="_footnoteref_2" class="footnote" href="#_footnotedef_2" title="View footnote.">2</a>]</sup>での、LLVMバックエンドの大きな流れ（特に命令選択）について概観した日本語スライド。</p>
+<p>「コンパイラ勉強会」<sup class="footnote">[<a id="_footnoteref_3" class="footnote" href="#_footnotedef_3" title="View footnote.">3</a>]</sup>での、LLVMバックエンドの大きな流れ（特に命令選択）について概観した日本語スライド。</p>
 </li>
 </ul>
 </div>
@@ -838,6 +851,9 @@ RegStateやframe index・register scavengerなどの説明が貴重。</p>
 <ul>
 <li>
 <p>数少ない日本語資料。Passやバックエンドの各クラスについて説明している。<a href="#llvm-code_generator">[31]</a>と合わせて大まかな流れを掴むのに良い。</p>
+</li>
+<li>
+<p>ただし書籍中で作成されているバックエンドは機能が制限されており、またコードベースも多少古い。</p>
 </li>
 </ul>
 </div>
@@ -868,7 +884,7 @@ RegStateやframe index・register scavengerなどの説明が貴重。</p>
 <div class="ulist">
 <ul>
 <li>
-<p>Googleが開発した32bit RISCの謎アーキテクチャ。全く実用されていないが、バックエンドが単純に設計されておりコメントも豊富のためかなり参考になる<sup class="footnote">[<a id="_footnoteref_3" class="footnote" href="#_footnotedef_3" title="View footnote.">3</a>]</sup><sup class="footnote">[<a id="_footnoteref_4" class="footnote" href="#_footnotedef_4" title="View footnote.">4</a>]</sup>。</p>
+<p>Googleが開発した32bit RISCの謎アーキテクチャ。全く実用されていないが、バックエンドが単純に設計されておりコメントも豊富のためかなり参考になる<sup class="footnote">[<a id="_footnoteref_4" class="footnote" href="#_footnotedef_4" title="View footnote.">4</a>]</sup><sup class="footnote">[<a id="_footnoteref_5" class="footnote" href="#_footnotedef_5" title="View footnote.">5</a>]</sup>。</p>
 </li>
 </ul>
 </div>
@@ -1117,6 +1133,9 @@ $ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示す
 <h2 id="_アセンブラを作る">アセンブラを作る</h2>
 <div class="sectionbody">
 <div class="paragraph">
+<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/2c31c0a80020cc50bba6df1c35da228905190d97">2c31c0a80020cc50bba6df1c35da228905190d97</a></p>
+</div>
+<div class="paragraph">
 <p>この章ではLLVMバックエンドの一部としてアセンブラを実装します。
 具体的にはLLVMのMCLayerを実装し、アセンブリからオブジェクトファイルへの変換を可能にします。
 一度にアセンブラ全体を作るのは難しいため、まずレジスタのみを使用する演算命令に絞って実装し、
@@ -1125,11 +1144,24 @@ $ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示す
 <div class="sect2">
 <h3 id="_tablegenファイルを追加する">TableGenファイルを追加する</h3>
 <div class="paragraph">
-<p>LLVMのDSLであるTableGenを使用してCAHPのレジスタや命令について記述します。
-追加スべきTableGenファイルはおおよそ次のとおりです。</p>
+<p>LLVM coreは基本的にC によって記述されています。一方で、多くの箇所で共通する処理などは
+独自のDSL（ドメイン固有言語）であるTableGenを用いて記述し `llvm-tblgen` という
+ソフトウェアを用いてこれをC コードに変換しています。
+こうすることによって記述量を減らし、ヒューマンエラーを少なくするという考え方
+のようです<a href="#llvm-tablegen">[21]</a>。</p>
+</div>
+<div class="paragraph">
+<p>LLVMバックエンドでは、アーキテクチャが持つレジスタや命令などの情報をTableGenによって
+記述します。大まかに言って、TableGenで書ける場所はTableGenによって書き、
+対応できない部分をC++ で直に書くというのがLLVM coreの方針のようです。
+ここでは、簡単なアセンブラを実装するために最低限必要なTableGenファイルを追加します。
+内訳は次のとおりです。</p>
 </div>
 <div class="ulist">
 <ul>
+<li>
+<p><code>CAHP.td</code>: 下のTableGenファイルをincludeし、その他もろもろを定義。</p>
+</li>
 <li>
 <p><code>CAHPRegisterInfo.td</code>: レジスタを定義。</p>
 </li>
@@ -1139,10 +1171,145 @@ $ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示す
 <li>
 <p><code>CAHPInstrInfo.td</code>: 命令を定義。</p>
 </li>
-<li>
-<p><code>CAHP.td</code>: 全体に関することを定義。</p>
-</li>
 </ul>
+</div>
+<div class="paragraph">
+<p>順に説明します。 <code>CAHP.td</code> がTableGenファイル全体をまとめているTableGenファイルで、
+内部では <code>include</code> を使って他のファイルを読み込んでいます。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>include "llvm/Target/Target.td"</pre>
+</div>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>include "CAHPRegisterInfo.td"
+include "CAHPInstrInfo.td"</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>また同時に、今回想定するプロセッサを表す <code>ProcessorModel</code> や、
+現在実装しているターゲットの <code>CAHP</code> について定義しています。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPRegisterInfo.td</code> ではCAHPに存在するレジスタを定義します。
+まず <code>Register</code> を継承して <code>class CAHPReg</code> を作り、これに基本的なレジスタの性質をもたせます。
+ついで <code>class CAHPReg</code> の実体として <code>X0</code> から <code>X15</code> を作成します。
+<code>alt</code> にはレジスタの別名を指定します。
+最後に、レジスタをまとめて <code>RegisterClass</code> である <code>GPR</code>
+（General Purpose Register; 汎用レジスタの意）を定義します。
+このあと命令を定義する際にはこの <code>RegisterClass</code> 単位で指定します。
+ここでレジスタを並べる順番が先であるほどレジスタ割り付けで割り付けられやすいため、
+caller-savedなもの（使ってもspill outが起こりにくいもの）を先に並べておきます。</p>
+</div>
+<div class="paragraph">
+<p><code>GPR</code> と同様に <code>SP</code> という <code>RegisterClass</code> も作成し、 <code>X1</code> 、
+つまりスタックポインタを表すレジスタのみを追加しておきます。
+この <code>RegisterClass</code> を命令のオペランドに指定することで
+<code>lwsp</code> や <code>swsp</code> などの「スタックポインタのみを取る命令」を表現することができます。</p>
+</div>
+<div class="paragraph">
+<p>命令は <code>CAHPInstrFormats.td</code> と <code>CAHPInstrInfo.td</code> に分けて記述します。
+<code>CAHPInstrFormats.td</code> ではおおよその命令の「形」を定義しておき、
+<code>CAHPInstrInfo.td</code> でそれを具体化します。言葉で言ってもわかりにくいので、コードで見ます。
+例えば24bit長の加算命令は次のように定義されます。
+まずCAHPの命令全体に共通する事項を <code>class CAHPInst</code> として定義します。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>class CAHPInst&lt;dag outs, dag ins, string opcodestr, string argstr, list&lt;dag&gt; pattern = []&gt;
+: Instruction {
+  let Namespace = "CAHP";
+
+  dag OutOperandList = outs;
+  dag InOperandList = ins;
+
+  let AsmString = opcodestr # "\t" # argstr;
+
+  // Matching patterns used when converting SelectionDAG into MachineDAG.
+  let Pattern = pattern;
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>次に、CAHPの24bit命令に共通する事項を <code>class CAHPInst</code> を継承した
+<code>class CAHP24Inst</code> として定義します。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>// 24-bit instruction format.
+class CAHPInst24&lt;dag outs, dag ins, string opcodestr, string argstr, list&lt;dag&gt; pattern = []&gt;
+: CAHPInst&lt;outs, ins, opcodestr, argstr, pattern&gt; {
+  let Size = 3;
+  bits&lt;24&gt; Inst;
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>さらに、24bit長加算命令の「形」である24bit R形式（オペランドにレジスタを3つとる）を
+<code>class CAHPInst24R</code> として定義します。 <code>class CAHPInst24</code> を継承します。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>// 24-bit R-instruction format.
+class CAHPInst24R&lt;bits&lt;8&gt; opcode, dag outs, dag ins, string opcodestr, string argstr&gt;
+: CAHPInst24&lt;outs, ins, opcodestr, argstr&gt; {
+  bits&lt;4&gt; rd;
+  bits&lt;4&gt; rs1;
+  bits&lt;4&gt; rs2;
+
+  let Inst{23-20} = 0;
+  let Inst{19-16} = rs2;
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-0} = opcode;
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>最後にこれを使って加算命令 <code>ADD</code> を定義します。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>def ADD : CAHPInst24R&lt;0b00000001, (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                      "add", "$rd, $rs1, $rs2"&gt;;</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>上記の継承による構造を展開すると、結局 <code>class Instruction</code> を使って
+次のような定義を行ったことになります。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>def ADD : Instruction {
+  let Namespace = "CAHP";
+
+  let Pattern = [];
+
+  let Size = 3; // 命令長は8bit * 3 = 24bit
+  bits&lt;24&gt; Inst;
+
+  bits&lt;4&gt; rd;  // オペランドrdは4bit
+  bits&lt;4&gt; rs1; // オペランドrs1は4bit
+  bits&lt;4&gt; rs2; // オペランドrs2は4bit
+
+  // 命令のエンコーディングは次の通り。
+  let Inst{23-20} = 0;
+  let Inst{19-16} = rs2;
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-0} = 0b00000001;
+
+  // 出力はレジスタクラスGPRのrdに入る。
+  dag OutOperandList = (outs GPR:$rd);
+  // 入力はレジスタクラスGPRのrs1とrs2に入る。
+  dag InOperandList = (ins GPR:$rs1, GPR:$rs2);
+
+  // アセンブリ上では「add rd, rs1, rs2」という形で与えられる。
+  let AsmString = "add\t$rd, $rs1, $rs2";
+}</pre>
+</div>
 </div>
 </div>
 <div class="sect2">
@@ -1878,21 +2045,24 @@ $ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示す
 <div id="footnotes">
 <hr>
 <div class="footnote" id="_footnotedef_1">
-<a href="#_footnoteref_1">1</a>. 論文とスライドも怪しいものだが、著者が一致しているので多分正しいだろう。
+<a href="#_footnoteref_1">1</a>. この 段落はクリエイティブ・コモンズより引用。
 </div>
 <div class="footnote" id="_footnotedef_2">
-<a href="#_footnoteref_2">2</a>. これとは別の発表で「コンパイラ開発してない人生はFAKE」という名言が飛び出した勉強会<a href="#compiler_study_report">[114]</a>。
+<a href="#_footnoteref_2">2</a>. 論文とスライドも怪しいものだが、著者が一致しているので多分正しいだろう。
 </div>
 <div class="footnote" id="_footnotedef_3">
-<a href="#_footnoteref_3">3</a>. LLVMバックエンドの開発を円滑にするためのアーキテクチャなのではと思うほどに分かりやすい。
+<a href="#_footnoteref_3">3</a>. これとは別の発表で「コンパイラ開発してない人生はFAKE」という名言が飛び出した勉強会<a href="#compiler_study_report">[114]</a>。
 </div>
 <div class="footnote" id="_footnotedef_4">
-<a href="#_footnoteref_4">4</a>. 後のSparcについて<a href="#llvm_dev_ml-059799">[116]</a> にて指摘されているように、商業的に成功しなかったバックエンドほどコードが単純で分かりやすい。
+<a href="#_footnoteref_4">4</a>. LLVMバックエンドの開発を円滑にするためのアーキテクチャなのではと思うほどに分かりやすい。
+</div>
+<div class="footnote" id="_footnotedef_5">
+<a href="#_footnoteref_5">5</a>. 後のSparcについて<a href="#llvm_dev_ml-059799">[116]</a> にて指摘されているように、商業的に成功しなかったバックエンドほどコードが単純で分かりやすい。
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2020-03-30 13:26:24 UTC
+Last updated 2020-03-30 14:42:47 UTC
 </div>
 </div>
 <script type="text/x-mathjax-config">
