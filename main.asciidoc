@@ -16,7 +16,9 @@ AsciiDocのコメントを用いて文中にFIXMEを仕込む。
 
 == この文書について
 
-この文書はAsciiDocを用いて執筆されています。
+この文書はhttps://asciidoctor.org/[Asciidoctor]を用いて執筆されています。
+記述方法はhttps://asciidoctor.org/docs/user-manual/[Asciidoctor User Manual]を
+参考にしてください。
 
 この文書はGitによって管理されています。
 https://github.com/ushitora-anqou/write-your-llvm-backend[リポジトリはGitHubにて
@@ -30,7 +32,8 @@ https://github.com/virtualsecureplatform/llvm-cahp[GitHubリポジトリにて�
 
 本文書の内容は筆者が独自に調査したものです。
 **疑う余地なく誤りが含まれます**。誤りに気づかれた方はGitHubリポジトリなどを通じて
-ご連絡ください。
+ご連絡ください。なお誤っていそうな部分についてはAsciidoctorのコメント機能を用いて
+コメントを残しています。 `FIXME` というキーワードでソースコードの全文検索をしてください。
 
 == LLVMバックエンド概略
 
@@ -284,15 +287,15 @@ https://github.com/virtualsecureplatform/llvm-cahp/commit/2c31c0a80020cc50bba6df
 
 === TableGenファイルを追加する
 
-LLVM coreは基本的にC++ によって記述されています。一方で、多くの箇所で共通する処理などは
+LLVM coreは基本的に{cpp}によって記述されています。一方で、多くの箇所で共通する処理などは
 独自のDSL（ドメイン固有言語）であるTableGenを用いて記述し `llvm-tblgen` という
-ソフトウェアを用いてこれをC++ コードに変換しています。
+ソフトウェアを用いてこれを{cpp}コードに変換しています。
 こうすることによって記述量を減らし、ヒューマンエラーを少なくするという考え方
 のようです<<llvm-tablegen>>。
 
 LLVMバックエンドでは、アーキテクチャが持つレジスタや命令などの情報をTableGenによって
 記述します。大まかに言って、TableGenで書ける場所はTableGenによって書き、
-対応できない部分をC++ で直に書くというのがLLVM coreの方針のようです。
+対応できない部分を{cpp}で直に書くというのがLLVM coreの方針のようです。
 // FIXME: 単なる印象。ほんまか？
 ここでは、簡単なアセンブラを実装するために最低限必要なTableGenファイルを追加します。
 内訳は次のとおりです。
@@ -410,11 +413,11 @@ def ADD : Instruction {
   bits<4> rs2; // オペランドrs2は4bit
 
   // 命令のエンコーディングは次の通り。
-  let Inst{23-20} = 0;
-  let Inst{19-16} = rs2;
-  let Inst{15-12} = rs1;
-  let Inst{11-8} = rd;
-  let Inst{7-0} = 0b00000001;
+  let Inst{23-20} = 0;        // 20〜23bit目は0
+  let Inst{19-16} = rs2;      // 16〜19bit目はrs2
+  let Inst{15-12} = rs1;      // 12〜15bit目はrs1
+  let Inst{11-8} = rd;        // 8〜11bit目はrd
+  let Inst{7-0} = 0b00000001; // 0〜7bit目は0bit目だけが1で残りは0
 
   // 出力はレジスタクラスGPRのrdに入る。
   dag OutOperandList = (outs GPR:$rd);
@@ -428,10 +431,175 @@ def ADD : Instruction {
 
 // FIXME: `AsmString` は出力とパーズの両方に使われるっぽい。要確認。
 
-// FIXME: 即値の取り回しについて書く
+`Inst` フィールドにエンコーディングを設定することで、
+TableGenにエンコードの処理を移譲することができますfootnote:[一方でx86など
+複雑なエンコーディングを行うISAの場合は `Inst` フィールドを使用せず、
+自前で変換を行っている。]。
+
+続いて即値を用いる命令を見ます。例として `addi` を取り上げます。
+`addi` は8bit符号付き即値をオペランドに取ります。まずこれを定義します。
+
+    class ImmAsmOperand<string prefix, int width, string suffix> : AsmOperandClass {
+      let Name = prefix # "Imm" # width # suffix;
+      let RenderMethod = "addImmOperands";
+      let DiagnosticType = "Invalid" # Name;
+    }
+
+    class SImmAsmOperand<int width, string suffix = "">
+        : ImmAsmOperand<"S", width, suffix> {
+    }
+
+    def simm8 : Operand<i16> {
+      let ParserMatchClass = SImmAsmOperand<8>;
+    }
+
+続いて命令の「形」を定義します。 `addi` は24bit I形式です。
+
+....
+class CAHPInst24I<bits<8> opcode, dag outs, dag ins, string opcodestr, string argstr>
+: CAHPInst24<outs, ins, opcodestr, argstr> {
+  bits<4> rd;
+  bits<4> rs1;
+  bits<8> imm;
+
+  let Inst{23-16} = imm;
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-0} = opcode;
+}
+....
+
+最後に、これを用いて `addi` を定義します。
+
+    def ADDI : CAHPInst24I<0b11000011, (outs GPR:$rd), (ins GPR:$rs1, simm8:$imm),
+                           "addi", "$rd, $rs1, $imm">;
+
+`add` の際には `GPR` とした第三オペランドが `simm8` となっています。
+これによって、この部分に符号付き8bit即値が来ることを指定しています。
+
+即値のうち、下位1bitが0になるものは `_lsb0` というサフィックスを名前につけ区別しておきます。
+`uimm7_lsb0` と `simm11_lsb0` がそれに当たります。
+後々、{cpp}コードにてこの制限が守られているかをチェックします。
+
+`add2` のような2オペランドの命令を記述する場合、上の方法では問題があります。
+というのも `add2` の第一オペランドは入力であると同時に出力先でもあるためです。
+// FIXME: 要検証：outsとinsに同じレジスタを指定した場合はエラーになる？
+このような場合は次のように `Constraints` フィールドにその旨を記述します。
+
+    let Constraints = "$rd = $rd_w" in {
+      def ADD2 : CAHPInst16R<0b10000000, (outs GPR:$rd_w), (ins GPR:$rd, GPR:$rs),
+                            "add2", "$rd, $rs">;
+    }
+
+なおTableGenでは `let` で囲むレコードが一つの場合は括弧 `{ }` は必要ありません。
+また `let` で外からフィールドを上書きするのと、 `def` の中身に記載するのとで意味は
+変わりません。すなわち、上のコードは次の2通りと意味は異なりません<<llvm-tablegen>>。
+// FIXME: 要検証：本当に意味が変わらないか
+
+    let Constraints = "$rd = $rd_w" in
+    def ADD2 : CAHPInst16R<0b10000000, (outs GPR:$rd_w), (ins GPR:$rd, GPR:$rs),
+                          "add2", "$rd, $rs">;
+
+    def ADD2 : CAHPInst16R<0b10000000, (outs GPR:$rd_w), (ins GPR:$rd, GPR:$rs),
+                          "add2", "$rd, $rs"> {
+      let Constraints = "$rd = $rd_w";
+    }
+
+必要なTableGenファイルを追加した後、
+これらのTableGenファイルが正しいかどうか `llvm-tblgen` を用いて確認します。
+// FIXME: 要検証：ここで表示されるのは継承を展開したものになっているはず。
+//                どのへんをみて「正しい」と判断するのか。
+
+    $ bin/llvm-tblgen -I ../llvm/lib/Target/CAHP/ -I ../llvm/include/ -I ../llvm/lib/Target/ ../llvm/lib/Target/CAHP/CAHP.td
+
+// FIXME: 要確認：キーワードfieldがつく場合とつかない場合で意味が異なるか。
+//                観測範囲で言うと多分変わらない。
 
 === `MCTargetDesc` を追加する
+
+アセンブラ本体の{cpp}コードを作成します。ここでは、
+アセンブリのエンコードからバイナリ生成部分を担当する `MCTargetDesc` ディレクトリを追加し、
+必要なファイルを揃えます。複数のクラスを定義しますが、それらは全て
+`MCTargetDesc/CAHPMCTargetDesc.cpp` にある `LLVMInitializeCAHPTargetMC`
+関数でLLVM coreに登録されます。
+
+定義するクラスは次のとおりです。
+
+* `CAHPMCAsmInfo`
+* `CAHPMCInstrInfo`
+* `CAHPMCRegisterInfo`
+* `CAHPMCSubtargetInfo`
+* `CAHPMCCodeEmitter`
+* `CAHPAsmBackend`
+* `CAHPELFObjectWriter`
+
+順に説明します。
+
+`CAHPMCAsmInfo` にはアセンブリがどのように表記されるかを主に記述します。
+// FIXME: 要確認：とllvm::MCAsmInfoのコメントにも書いてあるんだけど、
+//                の割にCalleeSaveStackSlotSizeとかCodePointerSizeとか指定してて
+//                どういうこっちゃとなる。
+`MCTargetDesc/CAHPMCAsmInfo.{h,cpp}` に記述します。
+
+`CAHPMCInstrInfo` は先程記述したTableGenファイルから、
+TableGenによって `InitCAHPMCInstrInfo` 関数として自動的に生成されます。
+`CAHPMCTargetDesc.cpp` 内でこれを呼び出して作成します。
+
+`CAHPMCRegisterInfo` も同様に自動的に生成されます。
+`InitCAHPMCRegisterInfo` 関数を呼び出します。なおこの関数の第二引数には
+関数の戻りアドレスが入るレジスタを指定しますfootnote:[内部で
+`llvm::MCRegisterInfo::InitMCRegisterInfo` <<llvm_doxygen-InitMCRegisterInfo>>
+を呼び出していることからわかります。]。
+CAHPではx0を表す `CAHP::X0` を渡すことになります。
+// FIXME: 要確認：return addressをスタックに積むx86では `eip` を（x86_64では `rip` を）返している。なぜかは良くわからない。
+
+`CAHPMCSubtargetInfo` も同様に自動生成されます。
+`createCAHPMCSubtargetInfoImpl` を呼び出します。この関数の第二引数には
+`CAHP.td` で `ProcessorModel` として定義したCPUの名前を指定します。
+
+`CAHPMCCodeEmitter` はアセンブリのエンコード作業を行います。
+`MCTargetDesc/CAHPMCCodeEmitter.cpp` に記述します。
+主要なエンコード処理はTableGenによって自動生成された
+`getBinaryCodeForInstr` を `CAHPMCCodeEmitter::encodeInstruction`
+から呼び出すことによって行われます。
+この関数は `CAHPGenMCCodeEmitter.inc` というファイルに定義されるため、
+これを `MCTargetDesc/CAHPMCCodeEmitter.cpp` 末尾で `#include` しておきます。
+
+`CAHPAsmBackend` にはオブジェクトファイルを作成する際に必要な
+fixupの操作や指定バイト数分の無効命令を書き出す処理などを記述します。
+`MCTargetDesc/CAHPAsmBackend.cpp` に記述します。
+fixupについては後ほど実装するためここではスタブにしておきます。
+
+`CAHPELFObjectWriter` にはELFファイル（の特にヘッダ）を作成する際に必要な情報を記載します。
+このクラスは `LLVMInitializeCAHPTargetMC` ではなく
+`CAHPAsmBackend` の `createObjectTargetWriter` メンバ関数として紐付けられます。
+親クラス `MCELFObjectTargetWriter` のコンストラクタに、
+CAHPマシンを表す `ELF::EM_CAHP` と、 `.rel` ではなく `.rela` を使用する旨を示す
+`true` を渡しておきますfootnote:[CAHPマシンの仕様などはこの世に存在しないので、
+これらは勝手に決めたものです。]。
+// FIXME: .rel と .rela の説明をする。原則これは歴史的事情で決まっているものなので
+//        どっちでもいい、みたいな話がLLDのコメントだったかELFの仕様書だったかに
+//        書いてあった気がする。覚えてない。
+また `getRelocType` メンバ関数はどのような再配置を行うかを見繕うためのものですが、
+ここではスタブにしておきます。
+
+上記を実装してビルドします。一度使ってみましょう。
+LLVMのアセンブラを単体で使う場合は `llvm-mc` というコマンドを使用します。
+次のようにすると `foo.s` というアセンブリファイルをオブジェクトファイルに
+変換できます。
+
+    $ bin/llvm-mc -arch=cahp -filetype=obj foo.s
+    bin/llvm-mc: error: this target does not support assembly parsing.
+
+このようなエラーメッセージが出れば成功ですfootnote:[失敗した場合は
+assertなどで異常終了し、スタックトレースなどが表示されます。]。
+// FIXME: 要確認：「成功」のときもスタックトレース出た気もする。
+続いてアセンブリをパーズする部分を開発します。
+
 === `CAHPAsmParser` を追加する
+
+アセンブリのパーズは `CAHPAsmParser` が取り仕切っています。
+
 === `CAHPInstPrinter` を実装する
 === テストを書く
 === メモリ演算を追加する
