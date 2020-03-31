@@ -7,6 +7,15 @@
 
 [ここからmasterが読めます。](https://ushitora-anqou.github.io/write-your-llvm-backend/)
 
+## ビルド方法
+
+Asciidoctorのmasterを持ってきて`asciidoctor main.asciidoc`とかする。
+
+文章を書くときに、ファイルを更新するたびにコンパイルしたい場合は
+付属の`Gemfile`と`Guardfile`を使って`bundle exec guard`とかする。
+要`bundle install`。Epiphany（GNU Web）を入れて生成されたHTMLを見ると、
+更新時にリロードしてくれるので便利。詳細は[公式ドキュメント](https://asciidoctor.org/docs/editing-asciidoc-with-live-preview/)を参照。
+
 ## Author
 
 [艮 鮟鱇（うしとら あんこう／Ushitora Anqou）](https://anqou.net/)
