@@ -581,7 +581,9 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <h2 id="_この文書について">この文書について</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>この文書はAsciiDocを用いて執筆されています。</p>
+<p>この文書はhttps://asciidoctor.org/[Asciidoctor]を用いて執筆されています。
+記述方法はhttps://asciidoctor.org/docs/user-manual/[Asciidoctor User Manual]を
+参考にしてください。</p>
 </div>
 <div class="paragraph">
 <p>この文書はGitによって管理されています。
@@ -598,7 +600,8 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div class="paragraph">
 <p>本文書の内容は筆者が独自に調査したものです。
 <strong>疑う余地なく誤りが含まれます</strong>。誤りに気づかれた方はGitHubリポジトリなどを通じて
-ご連絡ください。</p>
+ご連絡ください。なお誤っていそうな部分についてはAsciidoctorのコメント機能を用いて
+コメントを残しています。 <code>FIXME</code> というキーワードでソースコードの全文検索をしてください。</p>
 </div>
 </div>
 </div>
@@ -1144,16 +1147,16 @@ $ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示す
 <div class="sect2">
 <h3 id="_tablegenファイルを追加する">TableGenファイルを追加する</h3>
 <div class="paragraph">
-<p>LLVM coreは基本的にC によって記述されています。一方で、多くの箇所で共通する処理などは
-独自のDSL（ドメイン固有言語）であるTableGenを用いて記述し `llvm-tblgen` という
-ソフトウェアを用いてこれをC コードに変換しています。
+<p>LLVM coreは基本的にC&#43;&#43;によって記述されています。一方で、多くの箇所で共通する処理などは
+独自のDSL（ドメイン固有言語）であるTableGenを用いて記述し <code>llvm-tblgen</code> という
+ソフトウェアを用いてこれをC&#43;&#43;コードに変換しています。
 こうすることによって記述量を減らし、ヒューマンエラーを少なくするという考え方
 のようです<a href="#llvm-tablegen">[21]</a>。</p>
 </div>
 <div class="paragraph">
 <p>LLVMバックエンドでは、アーキテクチャが持つレジスタや命令などの情報をTableGenによって
 記述します。大まかに言って、TableGenで書ける場所はTableGenによって書き、
-対応できない部分をC++ で直に書くというのがLLVM coreの方針のようです。
+対応できない部分をC&#43;&#43;で直に書くというのがLLVM coreの方針のようです。
 ここでは、簡単なアセンブラを実装するために最低限必要なTableGenファイルを追加します。
 内訳は次のとおりです。</p>
 </div>
@@ -1295,11 +1298,11 @@ class CAHPInst24R&lt;bits&lt;8&gt; opcode, dag outs, dag ins, string opcodestr, 
   bits&lt;4&gt; rs2; // オペランドrs2は4bit
 
   // 命令のエンコーディングは次の通り。
-  let Inst{23-20} = 0;
-  let Inst{19-16} = rs2;
-  let Inst{15-12} = rs1;
-  let Inst{11-8} = rd;
-  let Inst{7-0} = 0b00000001;
+  let Inst{23-20} = 0;        // 20〜23bit目は0
+  let Inst{19-16} = rs2;      // 16〜19bit目はrs2
+  let Inst{15-12} = rs1;      // 12〜15bit目はrs1
+  let Inst{11-8} = rd;        // 8〜11bit目はrd
+  let Inst{7-0} = 0b00000001; // 0〜7bit目は0bit目だけが1で残りは0
 
   // 出力はレジスタクラスGPRのrdに入る。
   dag OutOperandList = (outs GPR:$rd);
@@ -1311,14 +1314,223 @@ class CAHPInst24R&lt;bits&lt;8&gt; opcode, dag outs, dag ins, string opcodestr, 
 }</pre>
 </div>
 </div>
+<div class="paragraph">
+<p><code>Inst</code> フィールドにエンコーディングを設定することで、
+TableGenにエンコードの処理を移譲することができます<sup class="footnote">[<a id="_footnoteref_6" class="footnote" href="#_footnotedef_6" title="View footnote.">6</a>]</sup>。</p>
+</div>
+<div class="paragraph">
+<p>続いて即値を用いる命令を見ます。例として <code>addi</code> を取り上げます。
+<code>addi</code> は8bit符号付き即値をオペランドに取ります。まずこれを定義します。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>class ImmAsmOperand&lt;string prefix, int width, string suffix&gt; : AsmOperandClass {
+  let Name = prefix # "Imm" # width # suffix;
+  let RenderMethod = "addImmOperands";
+  let DiagnosticType = "Invalid" # Name;
+}</pre>
+</div>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>class SImmAsmOperand&lt;int width, string suffix = ""&gt;
+    : ImmAsmOperand&lt;"S", width, suffix&gt; {
+}</pre>
+</div>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>def simm8 : Operand&lt;i16&gt; {
+  let ParserMatchClass = SImmAsmOperand&lt;8&gt;;
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>続いて命令の「形」を定義します。 <code>addi</code> は24bit I形式です。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>class CAHPInst24I&lt;bits&lt;8&gt; opcode, dag outs, dag ins, string opcodestr, string argstr&gt;
+: CAHPInst24&lt;outs, ins, opcodestr, argstr&gt; {
+  bits&lt;4&gt; rd;
+  bits&lt;4&gt; rs1;
+  bits&lt;8&gt; imm;
+
+  let Inst{23-16} = imm;
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-0} = opcode;
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>最後に、これを用いて <code>addi</code> を定義します。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>def ADDI : CAHPInst24I&lt;0b11000011, (outs GPR:$rd), (ins GPR:$rs1, simm8:$imm),
+                       "addi", "$rd, $rs1, $imm"&gt;;</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>add</code> の際には <code>GPR</code> とした第三オペランドが <code>simm8</code> となっています。
+これによって、この部分に符号付き8bit即値が来ることを指定しています。</p>
+</div>
+<div class="paragraph">
+<p>即値のうち、下位1bitが0になるものは <code>_lsb0</code> というサフィックスを名前につけ区別しておきます。
+<code>uimm7_lsb0</code> と <code>simm11_lsb0</code> がそれに当たります。
+後々、C&#43;&#43;コードにてこの制限が守られているかをチェックします。</p>
+</div>
+<div class="paragraph">
+<p><code>add2</code> のような2オペランドの命令を記述する場合、上の方法では問題があります。
+というのも <code>add2</code> の第一オペランドは入力であると同時に出力先でもあるためです。
+このような場合は次のように <code>Constraints</code> フィールドにその旨を記述します。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>let Constraints = "$rd = $rd_w" in {
+  def ADD2 : CAHPInst16R&lt;0b10000000, (outs GPR:$rd_w), (ins GPR:$rd, GPR:$rs),
+                        "add2", "$rd, $rs"&gt;;
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>なおTableGenでは <code>let</code> で囲むレコードが一つの場合は括弧 <code>{ }</code> は必要ありません。
+また <code>let</code> で外からフィールドを上書きするのと、 <code>def</code> の中身に記載するのとで意味は
+変わりません。すなわち、上のコードは次の2通りと意味は異なりません<a href="#llvm-tablegen">[21]</a>。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>let Constraints = "$rd = $rd_w" in
+def ADD2 : CAHPInst16R&lt;0b10000000, (outs GPR:$rd_w), (ins GPR:$rd, GPR:$rs),
+                      "add2", "$rd, $rs"&gt;;</pre>
+</div>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>def ADD2 : CAHPInst16R&lt;0b10000000, (outs GPR:$rd_w), (ins GPR:$rd, GPR:$rs),
+                      "add2", "$rd, $rs"&gt; {
+  let Constraints = "$rd = $rd_w";
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>必要なTableGenファイルを追加した後、
+これらのTableGenファイルが正しいかどうか <code>llvm-tblgen</code> を用いて確認します。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ bin/llvm-tblgen -I ../llvm/lib/Target/CAHP/ -I ../llvm/include/ -I ../llvm/lib/Target/ ../llvm/lib/Target/CAHP/CAHP.td</pre>
+</div>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_mctargetdesc_を追加する"><code>MCTargetDesc</code> を追加する</h3>
-
+<div class="paragraph">
+<p>アセンブラ本体のC&#43;&#43;コードを作成します。ここでは、
+アセンブリのエンコードからバイナリ生成部分を担当する <code>MCTargetDesc</code> ディレクトリを追加し、
+必要なファイルを揃えます。複数のクラスを定義しますが、それらは全て
+<code>MCTargetDesc/CAHPMCTargetDesc.cpp</code> にある <code>LLVMInitializeCAHPTargetMC</code>
+関数でLLVM coreに登録されます。</p>
+</div>
+<div class="paragraph">
+<p>定義するクラスは次のとおりです。</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>CAHPMCAsmInfo</code></p>
+</li>
+<li>
+<p><code>CAHPMCInstrInfo</code></p>
+</li>
+<li>
+<p><code>CAHPMCRegisterInfo</code></p>
+</li>
+<li>
+<p><code>CAHPMCSubtargetInfo</code></p>
+</li>
+<li>
+<p><code>CAHPMCCodeEmitter</code></p>
+</li>
+<li>
+<p><code>CAHPAsmBackend</code></p>
+</li>
+<li>
+<p><code>CAHPELFObjectWriter</code></p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>順に説明します。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPMCAsmInfo</code> にはアセンブリがどのように表記されるかを主に記述します。
+<code>MCTargetDesc/CAHPMCAsmInfo.{h,cpp}</code> に記述します。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPMCInstrInfo</code> は先程記述したTableGenファイルから、
+TableGenによって <code>InitCAHPMCInstrInfo</code> 関数として自動的に生成されます。
+<code>CAHPMCTargetDesc.cpp</code> 内でこれを呼び出して作成します。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPMCRegisterInfo</code> も同様に自動的に生成されます。
+<code>InitCAHPMCRegisterInfo</code> 関数を呼び出します。なおこの関数の第二引数には
+関数の戻りアドレスが入るレジスタを指定します<sup class="footnote">[<a id="_footnoteref_7" class="footnote" href="#_footnotedef_7" title="View footnote.">7</a>]</sup>。
+CAHPではx0を表す <code>CAHP::X0</code> を渡すことになります。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPMCSubtargetInfo</code> も同様に自動生成されます。
+<code>createCAHPMCSubtargetInfoImpl</code> を呼び出します。この関数の第二引数には
+<code>CAHP.td</code> で <code>ProcessorModel</code> として定義したCPUの名前を指定します。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPMCCodeEmitter</code> はアセンブリのエンコード作業を行います。
+<code>MCTargetDesc/CAHPMCCodeEmitter.cpp</code> に記述します。
+主要なエンコード処理はTableGenによって自動生成された
+<code>getBinaryCodeForInstr</code> を <code>CAHPMCCodeEmitter::encodeInstruction</code>
+から呼び出すことによって行われます。
+この関数は <code>CAHPGenMCCodeEmitter.inc</code> というファイルに定義されるため、
+これを <code>MCTargetDesc/CAHPMCCodeEmitter.cpp</code> 末尾で <code>#include</code> しておきます。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPAsmBackend</code> にはオブジェクトファイルを作成する際に必要な
+fixupの操作や指定バイト数分の無効命令を書き出す処理などを記述します。
+<code>MCTargetDesc/CAHPAsmBackend.cpp</code> に記述します。
+fixupについては後ほど実装するためここではスタブにしておきます。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPELFObjectWriter</code> にはELFファイル（の特にヘッダ）を作成する際に必要な情報を記載します。
+このクラスは <code>LLVMInitializeCAHPTargetMC</code> ではなく
+<code>CAHPAsmBackend</code> の <code>createObjectTargetWriter</code> メンバ関数として紐付けられます。
+親クラス <code>MCELFObjectTargetWriter</code> のコンストラクタに、
+CAHPマシンを表す <code>ELF::EM_CAHP</code> と、 <code>.rel</code> ではなく <code>.rela</code> を使用する旨を示す
+<code>true</code> を渡しておきます<sup class="footnote">[<a id="_footnoteref_8" class="footnote" href="#_footnotedef_8" title="View footnote.">8</a>]</sup>。
+また <code>getRelocType</code> メンバ関数はどのような再配置を行うかを見繕うためのものですが、
+ここではスタブにしておきます。</p>
+</div>
+<div class="paragraph">
+<p>上記を実装してビルドします。一度使ってみましょう。
+LLVMのアセンブラを単体で使う場合は <code>llvm-mc</code> というコマンドを使用します。
+次のようにすると <code>foo.s</code> というアセンブリファイルをオブジェクトファイルに
+変換できます。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ bin/llvm-mc -arch=cahp -filetype=obj foo.s
+bin/llvm-mc: error: this target does not support assembly parsing.</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>このようなエラーメッセージが出れば成功です<sup class="footnote">[<a id="_footnoteref_9" class="footnote" href="#_footnotedef_9" title="View footnote.">9</a>]</sup>。
+続いてアセンブリをパーズする部分を開発します。</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_cahpasmparser_を追加する"><code>CAHPAsmParser</code> を追加する</h3>
-
+<div class="paragraph">
+<p>アセンブリのパーズは <code>CAHPAsmParser</code> が取り仕切っています。</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_cahpinstprinter_を実装する"><code>CAHPInstPrinter</code> を実装する</h3>
@@ -2059,10 +2271,22 @@ class CAHPInst24R&lt;bits&lt;8&gt; opcode, dag outs, dag ins, string opcodestr, 
 <div class="footnote" id="_footnotedef_5">
 <a href="#_footnoteref_5">5</a>. 後のSparcについて<a href="#llvm_dev_ml-059799">[116]</a> にて指摘されているように、商業的に成功しなかったバックエンドほどコードが単純で分かりやすい。
 </div>
+<div class="footnote" id="_footnotedef_6">
+<a href="#_footnoteref_6">6</a>. 一方でx86など 複雑なエンコーディングを行うISAの場合は <code>Inst</code> フィールドを使用せず、 自前で変換を行っている。
+</div>
+<div class="footnote" id="_footnotedef_7">
+<a href="#_footnoteref_7">7</a>. 内部で <code>llvm::MCRegisterInfo::InitMCRegisterInfo</code> <a href="#llvm_doxygen-InitMCRegisterInfo">[55]</a> を呼び出していることからわかります。
+</div>
+<div class="footnote" id="_footnotedef_8">
+<a href="#_footnoteref_8">8</a>. CAHPマシンの仕様などはこの世に存在しないので、 これらは勝手に決めたものです。
+</div>
+<div class="footnote" id="_footnotedef_9">
+<a href="#_footnoteref_9">9</a>. 失敗した場合は assertなどで異常終了し、スタックトレースなどが表示されます。
+</div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2020-03-30 14:42:47 UTC
+Last updated 2020-03-31 13:19:48 UTC
 </div>
 </div>
 <script type="text/x-mathjax-config">
