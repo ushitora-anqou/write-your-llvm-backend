@@ -16,8 +16,8 @@ AsciiDocのコメントを用いて文中にFIXMEを仕込む。
 
 == この文書について
 
-この文書はhttps://asciidoctor.org/[Asciidoctor]を用いて執筆されています。
-記述方法はhttps://asciidoctor.org/docs/user-manual/[Asciidoctor User Manual]を
+この文書は https://asciidoctor.org/[Asciidoctor]を用いて執筆されています。
+記述方法は https://asciidoctor.org/docs/user-manual/[Asciidoctor User Manual]を
 参考にしてください。
 
 この文書はGitによって管理されています。
@@ -429,8 +429,6 @@ def ADD : Instruction {
 }
 ....
 
-// FIXME: `AsmString` は出力とパーズの両方に使われるっぽい。要確認。
-
 `Inst` フィールドにエンコーディングを設定することで、
 TableGenにエンコードの処理を移譲することができますfootnote:[一方でx86など
 複雑なエンコーディングを行うISAの場合は `Inst` フィールドを使用せず、
@@ -493,7 +491,7 @@ class CAHPInst24I<bits<8> opcode, dag outs, dag ins, string opcodestr, string ar
 
 なおTableGenでは `let` で囲むレコードが一つの場合は括弧 `{ }` は必要ありません。
 また `let` で外からフィールドを上書きするのと、 `def` の中身に記載するのとで意味は
-変わりません。すなわち、上のコードは次の2通りと意味は異なりません<<llvm-tablegen>>。
+変わりません。すなわち、上のコードは次の2通りと意味は異なりません<<llvm-tablegen-langref>>。
 // FIXME: 要検証：本当に意味が変わらないか
 
     let Constraints = "$rd = $rd_w" in
@@ -566,8 +564,8 @@ CAHPではx0を表す `CAHP::X0` を渡すことになります。
 これを `MCTargetDesc/CAHPMCCodeEmitter.cpp` 末尾で `#include` しておきます。
 
 `CAHPAsmBackend` にはオブジェクトファイルを作成する際に必要な
-fixupの操作や指定バイト数分の無効命令を書き出す処理などを記述します。
-`MCTargetDesc/CAHPAsmBackend.cpp` に記述します。
+fixupの操作（ `applyFixup` ）や指定バイト数分の無効命令を書き出す処理（ `writeNopData` ）
+などを記述します。 `MCTargetDesc/CAHPAsmBackend.cpp` に記述します。
 fixupについては後ほど実装するためここではスタブにしておきます。
 
 `CAHPELFObjectWriter` にはELFファイル（の特にヘッダ）を作成する際に必要な情報を記載します。
@@ -594,18 +592,332 @@ LLVMのアセンブラを単体で使う場合は `llvm-mc` というコマン�
 このようなエラーメッセージが出れば成功ですfootnote:[失敗した場合は
 assertなどで異常終了し、スタックトレースなどが表示されます。]。
 // FIXME: 要確認：「成功」のときもスタックトレース出た気もする。
-続いてアセンブリをパーズする部分を開発します。
+このエラーメッセージはCAHPターゲットがアセンブリのパーズ（構文解析）に対応していない
+ことを意味しています。これは次の節で実装します。
+
+[NOTE]
+====
+RISC-Vの拡張C命令には `add` などレジスタを5bitで指定する命令と、
+`sub` などレジスタを3bitで指定する命令の2種類があります。
+LLVM RISC-Vバックエンドを見ると、
+エンコードに際してこれらの区別のための特別な処理は行っていません。
+というのも、3bitでレジスタを指定する場合その添字の下位3bit以外が無視されるため、
+結果的に正しいコードが出力されるのです。
+例えば `x8` を指定すると、これに `1000` という添字が振られ、
+4bit目を無視することで `000` となるため、
+3bitでのレジスタ指定方法として正しいものになります。
+
+独自ISAなどで、このような手法が取れないレジスタの並びを使用する場合は、
+アセンブリをコードに変換する際にそのレジスタのエンコーディングを補正します。
+このようなレジスタオペランドエンコードのフックを行う関数を指定する場所として
+`RegisterOperand` の `EncoderMethod` があります。
+例えば `sub` で `X3` から `X10` を0〜7というエンコードで用いたい場合、
+`X3` から `X10` を `GPRC` という `RegisterClass` とした上で、
+これを `RegisterOperand` で包み `ShiftedGPRC` とします。
+これの `EncoderMethod` として `RV32KEncodeShiftedGPRCRegisterOperand` という関数を指定します。
+これは `RV32KMCCodeEmitter` クラスのメンバ関数として定義する。
+これによって任意の処理をフックすることができる。https://reviews.llvm.org/rL303044
+
+....
+def GPRC : RegisterClass<"RV32K", [i32], 32, (add
+            X3, X4, X5, X6, X7, X8, X9, X10
+    )>;
+
+def ShiftedGPRC : RegisterOperand<GPRC> {
+  let EncoderMethod = "RV32KEncodeShiftedGPRCRegisterOperand";
+  //let DecoderMethod = "RV32KDecodeShiftedGPRCRegisterOperand";
+}
+....
+
+....
+uint64_t
+RV32KEncodeShiftedGPRCRegisterOperand(const MCInst &MI, unsigned no,
+                                      SmallVectorImpl<MCFixup> &Fixups,
+                                      const MCSubtargetInfo &STI) const;
+
+uint64_t RV32KMCCodeEmitter::RV32KEncodeShiftedGPRCRegisterOperand(
+    const MCInst &MI, unsigned no, SmallVectorImpl<MCFixup> &Fixups,
+    const MCSubtargetInfo &STI) const {
+  const MCOperand &MO = MI.getOperand(no);
+  if (MO.isReg()) {
+    uint64_t op = Ctx.getRegisterInfo()->getEncodingValue(MO.getReg());
+    assert(3 <= op && op <= 10 && "op should belong to GPRC.");
+    return op - 3;
+  }
+
+  llvm_unreachable("Unhandled expression!");
+  return 0;
+}
+....
+
+// FIXME: 要修正：RV32Kv1のメモからそのまま引っ張ってきたのでめちゃくちゃ。
+
+====
 
 === `CAHPAsmParser` を追加する
 
-アセンブリのパーズは `CAHPAsmParser` が取り仕切っています。
+アセンブリのパーズは `CAHPAsmParser` クラスが取り仕切っています。
+新しく `AsmParser` ディレクトリを作成し、その中に `CAHPAsmParser.cpp` を作成して
+パーズ処理を記述します。<<github_riscv-llvm_patch_07>>を参考にします。
+
+`CAHPAsmParser::ParseInstruction` がパーズ処理のエントリポイントです。
+`CAHPAsmParser::parseOperand` や `CAHPAsmParser::parseRegister` ・
+`CAHPAsmParser::parseImmediate` を適宜用いながら、
+アセンブリのトークンを切り出し `Operands` に詰め込みますfootnote:[なお以下では
+しばらくの間、命令を表す `add` などの文字列そのものも「オペランド」として扱います。]。
+
+この際にオペランドを表すクラスとして `CAHPOperand` を定義・使用しています。
+オペランドとして現れうるのはレジスタと即値とその他のトークン（命令や括弧文字など）なので
+その旨を記述しますfootnote:[なおラベルなどの識別子がオペランドに来るアセンブリには
+まだ対応していませんが、後ほど対応する際にはトークンではなく
+即値として対応することになります。]。
+TableGenにて定義・使用した即値を正しく認識するために `isUImm4` や `isSImm11Lsb0` などの
+メンバ関数を定義する必要があります。これらの関数は後述の `MatchInstructionImpl` 内で
+使用されます。
+
+切り出されたオペランドのリストを命令としてLLVMに認識させるのは `MatchAndEmitInstruction` で
+行います。具体的には、先程の `Operands` を読み込んで `MCInst` に変換します。
+ただし実際の処理の殆どはTableGenによって自動生成された `MatchInstructionImpl` によって
+行われます。実際に書く必要があるのはこの関数が失敗した場合のエラーメッセージ等です。
+
+`CAHPAsmParser` を実装するとアセンブラが完成します。使ってみましょう。
+// FIXME: 要変更：この例はRV32Kv1のメモから取ったものなのでCAHPではない。
+
+....
+$ cat foo.s
+li x9, 3
+mv x11, x1
+sub x9, x10
+add x8, x1
+nop
+
+$ bin/llvm-mc -arch=rv32k -filetype=obj foo.s | od -tx1z -Ax -v
+000000 7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00  >.ELF............<
+000010 01 00 f5 00 01 00 00 00 00 00 00 00 00 00 00 00  >................<
+000020 68 00 00 00 00 00 00 00 34 00 00 00 00 00 28 00  >h.......4.....(.<
+000030 04 00 01 00 8d 44 86 85 89 8c 06 94 01 00 00 00  >.....D..........<
+000040 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000050 00 2e 74 65 78 74 00 2e 73 74 72 74 61 62 00 2e  >..text..strtab..<
+000060 73 79 6d 74 61 62 00 00 00 00 00 00 00 00 00 00  >symtab..........<
+000070 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000080 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000090 07 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00  >................<
+0000a0 50 00 00 00 17 00 00 00 00 00 00 00 00 00 00 00  >P...............<
+0000b0 01 00 00 00 00 00 00 00 01 00 00 00 01 00 00 00  >................<
+0000c0 06 00 00 00 00 00 00 00 34 00 00 00 0a 00 00 00  >........4.......<
+0000d0 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00  >................<
+0000e0 0f 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00  >................<
+0000f0 40 00 00 00 10 00 00 00 01 00 00 00 01 00 00 00  >@...............<
+000100 04 00 00 00 10 00 00 00                          >........<
+000108
+....
+
+0x34から0x3dにある `8d 44 86 85 89 8c 06 94 01 00` が出力であり、
+正しく生成されていることが分かります。
 
 === `CAHPInstPrinter` を実装する
+
+https://github.com/virtualsecureplatform/llvm-cahp/commit/aa66568c3dfe1d80a83a96bd0437a26fdb96872a[aa66568c3dfe1d80a83a96bd0437a26fdb96872a]
+
+次の節では、上記までで作成したアセンブラのテストを記述します。
+その際、アセンブリを `MCInst` に変換した上でそれをアセンブリに逆変換したものが、
+もとのアセンブリと同じであるか否かをチェックします。
+このテストを行うためには `MCInst` からアセンブリを得るための仕組みが必要です。
+この節ではこれを行う `CAHPInstPrinter` クラスを実装します。
+<<github_riscv-llvm_patch_08>>を参考にします。
+
+`InstPrinter` ディレクトリを作成し `InstPrinter/CAHPInstPrinter.{cpp,h}` を作成します。
+命令印字処理の本体は `CAHPInstPrinter::printInst` ですが、
+そのほとんどの処理は `CAHPInstPrinter::printInstruction` というTableGenが生成する
+メンバ関数により実行されます。 `CAHPInstPrinter::printRegName` はレジスタ名を
+出力する関数で `CAHPInstPrinter::printOperand` から呼ばれますが、
+これも `CAHPInstPrinter::getRegisterName` という自動生成された
+メンバ関数に処理を移譲します。この `CAHPInstPrinter::getRegisterName` の第二引数に
+何も渡さなければ（デフォルト引数 `CAHP::ABIRegAltName` を利用すれば）
+TableGenで定義したAltNameが出力に使用されますfootnote:[この場合
+`AltNames` が指定されていないレジスタ（条件分岐のためのフラグなど）があるとエラーとなります。
+アセンブリ中に表示され得ないレジスタにもダミーの名前をつける必要があります。]。
+// FIXME: 要調査：x86のEFLAGSの名前取っ払ったらエラーになるのか？
+`CAHP::NoRegAltName` を渡すと本来の名前（CAHPでは `x0` 〜 `x15` ）が使用されます。
+
+`CAHPInstPrinter` クラスは `MCTargetDesc/CAHPMCTargetDesc.cpp` にて作成・登録されます。
+
+節の冒頭で説明した「アセンブリを `MCInst` に変換した上でそれをアセンブリに逆変換」は
+`llvm-mc` の `-show-encoding` オプションを用いて行うことができます。
+`-show-encoding` を指定することよって当該アセンブリがどのような機械語に
+翻訳されるか確認することができます。
+// FIXME: 要修正：RV32KのものなのでCAHPではない。
+
+....
+$ cat foo.s
+// FIXME
+
+$ bin/llvm-mc -arch=rv32k -show-encoding foo.s
+    .text
+    li	x9, 3                   # encoding: [0x8d,0x44]
+    mv	x11, x1                 # encoding: [0x86,0x85]
+    sub	x9, x10                 # encoding: [0x89,0x8c]
+    add	x8, x1                  # encoding: [0x06,0x94]
+    nop	                        # encoding: [0x01,0x00]
+....
+
 === テストを書く
+
+https://github.com/virtualsecureplatform/llvm-cahp/commit/c8bbf894c7ba046ddd3f55677f2d4512dd944aa0[c8bbf894c7ba046ddd3f55677f2d4512dd944aa0]
+
+前節で動作させた `-show-encoding` オプションを用いて、
+アセンブラが正しく動作していることを確認するためのテストを記述します。
+前節と同様にパッチ<<github_riscv-llvm_patch_08>>を参考にします。
+
+まず `test/MC/CAHP` ディレクトリを作成し、その中に `cahp-valid.s` と `cahp-invalid.s` を
+作成します。前者で正しいアセンブリが適切に処理されるか、
+後者で誤ったアセンブリに正しくエラーを出力するかを確認します。
+
+記述後 `llvm-lit` を用いてテストを行います。
+// FIXME: 要修正：RV32KでなくCAHPのものを。
+
+....
+$ bin/llvm-lit -as --filter 'RV32K' test
+PASS: LLVM :: MC/RV32K/rv32k-valid.s (1 of 2)
+Script:
+--
+: 'RUN: at line 1';   /home/anqou/workspace/llvm-project/build/bin/llvm-mc /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-valid.s -triple=rv32k -show-encoding      | /home/anqou/workspace/llvm-project/build/bin/FileCheck -check-prefixes=CHECK,CHECK-INST /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-valid.s
+--
+Exit Code: 0
+
+
+********************
+PASS: LLVM :: MC/RV32K/rv32k-invalid.s (2 of 2)
+Script:
+--
+: 'RUN: at line 1';   not /home/anqou/workspace/llvm-project/build/bin/llvm-mc -triple rv32k < /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-invalid.s 2>&1 | /home/anqou/workspace/llvm-project/build/bin/FileCheck /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-invalid.s
+--
+Exit Code: 0
+
+
+********************
+Testing Time: 0.11s
+  Expected Passes    : 2
+....
+
 === メモリ演算を追加する
-=== 属性を指定する
+
+https://github.com/virtualsecureplatform/llvm-cahp/commit/43145f861dc729756a8a85df13a7257248e98169[43145f861dc729756a8a85df13a7257248e98169]
+
+前節までで、レジスタのみを使用する命令に対応しました。この節ではメモリを使用する
+命令に対応します。具体的にはメモリから1ワード（2バイト）読み込む `lw` と
+1ワード書き込む `sw` 、及びその1バイト版である `lb/lbu/sb` 、
+更にスタックへの読み書きに特化した `lwsp/swsp` を追加します。
+
+まずTableGenにこれらの命令を定義します。
+CAHPアセンブリ中ではメモリは即値とレジスタの組み合わせで表現されます。
+// FIXME: 要調査：こういう「メモリ番地の指定方法」を一般に何ていうんだっけ……
+例えば `x8` に入っている値に `4` 足した番地から1ワード読み込んで `x9` に入れる場合は
+`lw x9, 4(x8)` と書きます。これを正しく表示するために `AsmString` にはこのように書きます。
+
+    def LW  : CAHPInst24MLoad <0b010101, (outs GPR:$rd), (ins GPR:$rs, simm11_lsb0:$imm),
+                               "lw",  "$rd, ${imm}(${rs})">
+
+ここで `${imm}` と括弧でくくっているのは、単に `$imm(` とかくと `imm(` という識別子として
+認識されてしまうためです。
+
+次いでこれらのアセンブリをパーズできるように `CAHPAsmParser` に手を加えます。
+`CAHPAsmParser::parseMemOpBaseReg` メンバ関数を定義してメモリ指定のアセンブリである
+`即値(レジスタ)` という形を読み込めるようにし、これを `CAHPAsmParser::parseOperand` から
+呼び出します。
+
+最後にテストを書きます。
+
+=== フィールドを詳細に指定する
+
+https://github.com/virtualsecureplatform/llvm-cahp/commit/1963e0288a450c3785723861c7c5d5c7280186fc[1963e0288a450c3785723861c7c5d5c7280186fc]
+
+各命令がどのような特性を持つかをTableGenで指定します。
+この情報はコード生成の際に使用されます。
+これらのフィールドは `llvm/include/llvm/Target/Target.td`
+にてコメントとともに定義されています。
+
+以下に主要なフィールドについて説明します。
+// FIXME: 要修正：DefsとかisCommutableとかhasSideEffectsが非直感的。
+
+// FIXME: 要修正：もうちょっと詳しく書く。
+
 === ディスアセンブラを実装する
+
+https://github.com/virtualsecureplatform/llvm-cahp/commit/01fdfc0e1a5281527e339913ee08cb0da9d75f46[01fdfc0e1a5281527e339913ee08cb0da9d75f46]
+
+<<github_riscv-llvm_patch_10>>を参考にしてディスアセンブラを実装します。
+`Disassembler` ディレクトリを作成して `Disassembler/CAHPDisassembler.cpp`
+を追加・記述します。
+
+ディスアセンブラの本体は `CAHPDisassembler::getInstruction` です。
+ディスアセンブルの処理のほとんどはTableGenが生成する `decodeInstruction` 関数によって
+行われます。CAHPでは24bitの命令と16bitの命令が混在するため、
+バイナリ列を解析してどちらの命令かを判断し、 `decodeInstruction` の第一引数に
+渡すテーブルを選びます。
+
+レジスタのディスアセンブルは `DecodeGPRRegisterClass` にて行います。
+
+即値のディスアセンブルは `decodeUImmOperand` と `decodeSImmOperand` にて
+行います。これらの関数は `CAHPInstrInfo.td` にて 即値オペランドの `DecoderMethod` として
+指定します。
+
+ナイーブに実装すると `lwsp` や `swsp` が入ったバイナリをディスアセンブルしようとしたときに
+エラーがでる。これは例えば次のようにして確認することができる。
+// FIXME: 要修正：RV32K用になっているのでCAHPに修正。
+....
+$ cat test.s
+lwsp x11, 0(sp)
+
+$ bin/llvm-mc -filetype=obj -triple=rv32k < test.s | bin/llvm-objdump -d -
+....
+原因は `lwsp` や `swsp` がアセンブリ上はspというオペランドをとるにも関わらず、
+バイナリにはその情報が埋め込まれないためである。このためディスアセンブル時に
+オペランドが一つ足りない状態になり、配列の添字チェックに引っかかってしまう。
+
+これを修正するためには `lwsp` や `swsp` に含まれる即値のDecoderが呼ばれたときをフックし、
+`sp` のオペランドが必要ならばこれを補えばよいfootnote:[この実装手法はRISC Vのそれによる。かなりad-hocだと感じるが、他の方法が分からないのでとりあえず真似る。]。
+この関数を `addImplySP` という名前で実装する。ここで即値をオペランドに追加するために呼ぶ
+`Inst.addOperand` と `addImplySP` の呼び出しの順序に注意が必要である。
+すなわち `LWSP` を `CAHPInstrInfo.td` で定義したときのオペランドの順序で呼ばなければ
+`lwsp x11, sp(0)` のようなおかしなアセンブリが生成されてしまう。
+
+[NOTE]
+====
+ちなみにエンコード方式にコンフリクトがある場合はビルド時に教えてくれる。
+
+....
+Decoding Conflict:
+		111...........01
+		111.............
+		................
+	BNEZ 111___________01
+	BNEZhoge 111___________01
+....
+// FIXME: 要修正：BNEZはRV32Kv1のもの
+
+これを防ぐためには、もちろん異なるエンコード方式を指定すればよいのだが、
+他にディスアセンブル時に命令を無効化する方法としてTableGenファイルで
+`isPseudo = 1` を指定して疑似命令にしたり
+`isCodeGen = 1` を指定してコード生成時にのみ効力を持つ
+命令にすることなどができる。
+
+====
+
 === relocationとfixupに対応する
+
+https://github.com/virtualsecureplatform/llvm-cahp/commit/a03e70e9157510937ca522f14ca0c64c61d47ca7[a03e70e9157510937ca522f14ca0c64c61d47ca7]
+
+ワンパスでは決められない値についてあとから補うための機構であるfixupと、
+コンパイル時には決定できない値に対してリンカにその処理を任せるためのrelocationについて
+対応する。参考にするパッチは<<github_riscv-llvm_patch_11>>。
+
+必要な作業は大きく分けて次の通り。
+* Fixupの種類とその内容を定義する。
+* Fixupを適用する関数を定義する。
+* アセンブラがFixupを生成するように改変する。
+* Fixupが解決されないまま最後まで残る場合は、これをrelocationに変換する。
+
 === `%hi` と `%lo` に対応する
 === `li a0, foo` をエラーにする
 === llvm-objdump の調査
