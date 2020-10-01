@@ -10,8 +10,8 @@
 Twitter https://twitter.com/ushitora_anqou[@ushitora_anqou]までリプライなどを貰えれば反応するかもしれない。
 
 この文章は、前に作ったRV16Kv2及びRV32Kv1用LLVMバックエンドで得た知識を前提にして書かれている。
-RV16Kv2のメモは<<draft-rv16kv2.adoc>>を参照のこと。
-RV32Kv1のメモは<<draft-rv32kv1.adoc>>を参照のこと。
+RV16Kv2のメモはhttps://ushitora-anqou.github.io/write-your-llvm-backend/draft-rv16kv2.html[draft-rv16kv2.adoc]を参照のこと。
+RV32Kv1のメモはlink:https://ushitora-anqou.github.io/write-your-llvm-backend/draft-rv32kv1.html[draft-rv32kv1.adoc]を参照のこと。
 
 ソースコードはlink:https://github.com/virtualsecureplatform/llvm-cahp[GitHub]にある。
 
