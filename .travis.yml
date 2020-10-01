@@ -15,6 +15,7 @@ script:
     - asciidoctor/bin/asciidoctor draft-rv32kv1.asciidoc -o build/draft-rv32kv1.html
 deploy:
     provider: pages:git
-    token: $GITHUB_TOKEN
     edge: true
     local_dir: build/
+    token:
+      secure: "bkhKJHkgGqoleoSmsVK+ZTc+zf16P0sMlev1IFw4UzaU/PBXZgtXFIcZ1gntuyra+8jyzzeJal0HyYROVx7/TJbrmgmq4fDY469t+0r5onE5OEfklfLCIAdwUIfE3QZ9SQclYOzeVmN5Qdp/+H7I0hVqz7d2RwZcGid/RethywiVKxU+4/+sKYumn0330P1xZnuPTbtjIv5ohlWtVdWsTuj3jwKP7vOkSmIL1zxG5FLhFccEveSc7UYNqYH3OTnVQcJiHejG3VaBYzGD9td93lDEjvBMEfqLfxqX13U4F1pUfLoE6dreVmtjJ5mi+wzWMqFJlYtaG6efP74SAyGRjyxZ/gYYO5CIB/FX8yjd4urfiaKeWkC++HeNlrRG3Z+lFaCuc1Z6c6w1yudweG7Ah/bTsBTX2SxD2NNy7IiDMJxv0Yr5fKMvTFG6mO7swRAtc3kgdMyNd2kAQSYRSOVo2z61Pr64mrO6NhB0ySNOTaYWCU9aBiLkvXPeMhXnT2xa3e8kXYCNP0Khehy1BfMogEUWT3HGGxaiZCw7TG+tLkrZx6d9MkTm2J0KddMtku8GVW5aQ31Z0upKUJr0953fvfXnDPreyZgcY8V/mKIxfw0Ogf8LH7PSC/t43KcXgCaOfm55HYDm8HrQeHcE1ZIoHNxIwA5fVa0YtJdRVpAjLnQ="
