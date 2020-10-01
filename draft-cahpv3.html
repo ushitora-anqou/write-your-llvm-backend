@@ -1,0 +1,3072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.11.dev">
+<meta name="author" content="艮鮟鱇">
+<title>[下書き] LLVMバックエンド開発文書 for CAHPv3</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700">
+<style>
+/* Asciidoctor default stylesheet | MIT License | https://asciidoctor.org */
+/* Uncomment @import statement to use as custom stylesheet */
+/*@import "https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700";*/
+article,aside,details,figcaption,figure,footer,header,hgroup,main,nav,section{display:block}
+audio,video{display:inline-block}
+audio:not([controls]){display:none;height:0}
+html{font-family:sans-serif;-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%}
+a{background:none}
+a:focus{outline:thin dotted}
+a:active,a:hover{outline:0}
+h1{font-size:2em;margin:.67em 0}
+abbr[title]{border-bottom:1px dotted}
+b,strong{font-weight:bold}
+dfn{font-style:italic}
+hr{-moz-box-sizing:content-box;box-sizing:content-box;height:0}
+mark{background:#ff0;color:#000}
+code,kbd,pre,samp{font-family:monospace;font-size:1em}
+pre{white-space:pre-wrap}
+q{quotes:"\201C" "\201D" "\2018" "\2019"}
+small{font-size:80%}
+sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}
+sup{top:-.5em}
+sub{bottom:-.25em}
+img{border:0}
+svg:not(:root){overflow:hidden}
+figure{margin:0}
+fieldset{border:1px solid silver;margin:0 2px;padding:.35em .625em .75em}
+legend{border:0;padding:0}
+button,input,select,textarea{font-family:inherit;font-size:100%;margin:0}
+button,input{line-height:normal}
+button,select{text-transform:none}
+button,html input[type="button"],input[type="reset"],input[type="submit"]{-webkit-appearance:button;cursor:pointer}
+button[disabled],html input[disabled]{cursor:default}
+input[type="checkbox"],input[type="radio"]{box-sizing:border-box;padding:0}
+button::-moz-focus-inner,input::-moz-focus-inner{border:0;padding:0}
+textarea{overflow:auto;vertical-align:top}
+table{border-collapse:collapse;border-spacing:0}
+*,*::before,*::after{-moz-box-sizing:border-box;-webkit-box-sizing:border-box;box-sizing:border-box}
+html,body{font-size:100%}
+body{background:#fff;color:rgba(0,0,0,.8);padding:0;margin:0;font-family:"Noto Serif","DejaVu Serif",serif;font-weight:400;font-style:normal;line-height:1;position:relative;cursor:auto;tab-size:4;-moz-osx-font-smoothing:grayscale;-webkit-font-smoothing:antialiased}
+a:hover{cursor:pointer}
+img,object,embed{max-width:100%;height:auto}
+object,embed{height:100%}
+img{-ms-interpolation-mode:bicubic}
+.left{float:left!important}
+.right{float:right!important}
+.text-left{text-align:left!important}
+.text-right{text-align:right!important}
+.text-center{text-align:center!important}
+.text-justify{text-align:justify!important}
+.hide{display:none}
+img,object,svg{display:inline-block;vertical-align:middle}
+textarea{height:auto;min-height:50px}
+select{width:100%}
+.center{margin-left:auto;margin-right:auto}
+.stretch{width:100%}
+.subheader,.admonitionblock td.content>.title,.audioblock>.title,.exampleblock>.title,.imageblock>.title,.listingblock>.title,.literalblock>.title,.stemblock>.title,.openblock>.title,.paragraph>.title,.quoteblock>.title,table.tableblock>.title,.verseblock>.title,.videoblock>.title,.dlist>.title,.olist>.title,.ulist>.title,.qlist>.title,.hdlist>.title{line-height:1.45;color:#7a2518;font-weight:400;margin-top:0;margin-bottom:.25em}
+div,dl,dt,dd,ul,ol,li,h1,h2,h3,#toctitle,.sidebarblock>.content>.title,h4,h5,h6,pre,form,p,blockquote,th,td{margin:0;padding:0;direction:ltr}
+a{color:#2156a5;text-decoration:underline;line-height:inherit}
+a:hover,a:focus{color:#1d4b8f}
+a img{border:0}
+p{font-family:inherit;font-weight:400;font-size:1em;line-height:1.6;margin-bottom:1.25em;text-rendering:optimizeLegibility}
+p aside{font-size:.875em;line-height:1.35;font-style:italic}
+h1,h2,h3,#toctitle,.sidebarblock>.content>.title,h4,h5,h6{font-family:"Open Sans","DejaVu Sans",sans-serif;font-weight:300;font-style:normal;color:#ba3925;text-rendering:optimizeLegibility;margin-top:1em;margin-bottom:.5em;line-height:1.0125em}
+h1 small,h2 small,h3 small,#toctitle small,.sidebarblock>.content>.title small,h4 small,h5 small,h6 small{font-size:60%;color:#e99b8f;line-height:0}
+h1{font-size:2.125em}
+h2{font-size:1.6875em}
+h3,#toctitle,.sidebarblock>.content>.title{font-size:1.375em}
+h4,h5{font-size:1.125em}
+h6{font-size:1em}
+hr{border:solid #dddddf;border-width:1px 0 0;clear:both;margin:1.25em 0 1.1875em;height:0}
+em,i{font-style:italic;line-height:inherit}
+strong,b{font-weight:bold;line-height:inherit}
+small{font-size:60%;line-height:inherit}
+code{font-family:"Droid Sans Mono","DejaVu Sans Mono",monospace;font-weight:400;color:rgba(0,0,0,.9)}
+ul,ol,dl{font-size:1em;line-height:1.6;margin-bottom:1.25em;list-style-position:outside;font-family:inherit}
+ul,ol{margin-left:1.5em}
+ul li ul,ul li ol{margin-left:1.25em;margin-bottom:0;font-size:1em}
+ul.square li ul,ul.circle li ul,ul.disc li ul{list-style:inherit}
+ul.square{list-style-type:square}
+ul.circle{list-style-type:circle}
+ul.disc{list-style-type:disc}
+ol li ul,ol li ol{margin-left:1.25em;margin-bottom:0}
+dl dt{margin-bottom:.3125em;font-weight:bold}
+dl dd{margin-bottom:1.25em}
+abbr,acronym{text-transform:uppercase;font-size:90%;color:rgba(0,0,0,.8);border-bottom:1px dotted #ddd;cursor:help}
+abbr{text-transform:none}
+blockquote{margin:0 0 1.25em;padding:.5625em 1.25em 0 1.1875em;border-left:1px solid #ddd}
+blockquote cite{display:block;font-size:.9375em;color:rgba(0,0,0,.6)}
+blockquote cite::before{content:"\2014 \0020"}
+blockquote cite a,blockquote cite a:visited{color:rgba(0,0,0,.6)}
+blockquote,blockquote p{line-height:1.6;color:rgba(0,0,0,.85)}
+@media screen and (min-width:768px){h1,h2,h3,#toctitle,.sidebarblock>.content>.title,h4,h5,h6{line-height:1.2}
+h1{font-size:2.75em}
+h2{font-size:2.3125em}
+h3,#toctitle,.sidebarblock>.content>.title{font-size:1.6875em}
+h4{font-size:1.4375em}}
+table{background:#fff;margin-bottom:1.25em;border:solid 1px #dedede}
+table thead,table tfoot{background:#f7f8f7}
+table thead tr th,table thead tr td,table tfoot tr th,table tfoot tr td{padding:.5em .625em .625em;font-size:inherit;color:rgba(0,0,0,.8);text-align:left}
+table tr th,table tr td{padding:.5625em .625em;font-size:inherit;color:rgba(0,0,0,.8)}
+table tr.even,table tr.alt{background:#f8f8f7}
+table thead tr th,table tfoot tr th,table tbody tr td,table tr td,table tfoot tr td{display:table-cell;line-height:1.6}
+h1,h2,h3,#toctitle,.sidebarblock>.content>.title,h4,h5,h6{line-height:1.2;word-spacing:-.05em}
+h1 strong,h2 strong,h3 strong,#toctitle strong,.sidebarblock>.content>.title strong,h4 strong,h5 strong,h6 strong{font-weight:400}
+.clearfix::before,.clearfix::after,.float-group::before,.float-group::after{content:" ";display:table}
+.clearfix::after,.float-group::after{clear:both}
+:not(pre):not([class^=L])>code{font-size:.9375em;font-style:normal!important;letter-spacing:0;padding:.1em .5ex;word-spacing:-.15em;background:#f7f7f8;-webkit-border-radius:4px;border-radius:4px;line-height:1.45;text-rendering:optimizeSpeed;word-wrap:break-word}
+:not(pre)>code.nobreak{word-wrap:normal}
+:not(pre)>code.nowrap{white-space:nowrap}
+pre{color:rgba(0,0,0,.9);font-family:"Droid Sans Mono","DejaVu Sans Mono",monospace;line-height:1.45;text-rendering:optimizeSpeed}
+pre code,pre pre{color:inherit;font-size:inherit;line-height:inherit}
+pre>code{display:block}
+pre.nowrap,pre.nowrap pre{white-space:pre;word-wrap:normal}
+em em{font-style:normal}
+strong strong{font-weight:400}
+.keyseq{color:rgba(51,51,51,.8)}
+kbd{font-family:"Droid Sans Mono","DejaVu Sans Mono",monospace;display:inline-block;color:rgba(0,0,0,.8);font-size:.65em;line-height:1.45;background:#f7f7f7;border:1px solid #ccc;-webkit-border-radius:3px;border-radius:3px;-webkit-box-shadow:0 1px 0 rgba(0,0,0,.2),0 0 0 .1em white inset;box-shadow:0 1px 0 rgba(0,0,0,.2),0 0 0 .1em #fff inset;margin:0 .15em;padding:.2em .5em;vertical-align:middle;position:relative;top:-.1em;white-space:nowrap}
+.keyseq kbd:first-child{margin-left:0}
+.keyseq kbd:last-child{margin-right:0}
+.menuseq,.menuref{color:#000}
+.menuseq b:not(.caret),.menuref{font-weight:inherit}
+.menuseq{word-spacing:-.02em}
+.menuseq b.caret{font-size:1.25em;line-height:.8}
+.menuseq i.caret{font-weight:bold;text-align:center;width:.45em}
+b.button::before,b.button::after{position:relative;top:-1px;font-weight:400}
+b.button::before{content:"[";padding:0 3px 0 2px}
+b.button::after{content:"]";padding:0 2px 0 3px}
+p a>code:hover{color:rgba(0,0,0,.9)}
+#header,#content,#footnotes,#footer{width:100%;margin-left:auto;margin-right:auto;margin-top:0;margin-bottom:0;max-width:62.5em;*zoom:1;position:relative;padding-left:.9375em;padding-right:.9375em}
+#header::before,#header::after,#content::before,#content::after,#footnotes::before,#footnotes::after,#footer::before,#footer::after{content:" ";display:table}
+#header::after,#content::after,#footnotes::after,#footer::after{clear:both}
+#content{margin-top:1.25em}
+#content::before{content:none}
+#header>h1:first-child{color:rgba(0,0,0,.85);margin-top:2.25rem;margin-bottom:0}
+#header>h1:first-child+#toc{margin-top:8px;border-top:1px solid #dddddf}
+#header>h1:only-child,body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
+#header .details{border-bottom:1px solid #dddddf;line-height:1.45;padding-top:.25em;padding-bottom:.25em;padding-left:.25em;color:rgba(0,0,0,.6);display:-ms-flexbox;display:-webkit-flex;display:flex;-ms-flex-flow:row wrap;-webkit-flex-flow:row wrap;flex-flow:row wrap}
+#header .details span:first-child{margin-left:-.125em}
+#header .details span.email a{color:rgba(0,0,0,.85)}
+#header .details br{display:none}
+#header .details br+span::before{content:"\00a0\2013\00a0"}
+#header .details br+span.author::before{content:"\00a0\22c5\00a0";color:rgba(0,0,0,.85)}
+#header .details br+span#revremark::before{content:"\00a0|\00a0"}
+#header #revnumber{text-transform:capitalize}
+#header #revnumber::after{content:"\00a0"}
+#content>h1:first-child:not([class]){color:rgba(0,0,0,.85);border-bottom:1px solid #dddddf;padding-bottom:8px;margin-top:0;padding-top:1rem;margin-bottom:1.25rem}
+#toc{border-bottom:1px solid #e7e7e9;padding-bottom:.5em}
+#toc>ul{margin-left:.125em}
+#toc ul.sectlevel0>li>a{font-style:italic}
+#toc ul.sectlevel0 ul.sectlevel1{margin:.5em 0}
+#toc ul{font-family:"Open Sans","DejaVu Sans",sans-serif;list-style-type:none}
+#toc li{line-height:1.3334;margin-top:.3334em}
+#toc a{text-decoration:none}
+#toc a:active{text-decoration:underline}
+#toctitle{color:#7a2518;font-size:1.2em}
+@media screen and (min-width:768px){#toctitle{font-size:1.375em}
+body.toc2{padding-left:15em;padding-right:0}
+#toc.toc2{margin-top:0!important;background:#f8f8f7;position:fixed;width:15em;left:0;top:0;border-right:1px solid #e7e7e9;border-top-width:0!important;border-bottom-width:0!important;z-index:1000;padding:1.25em 1em;height:100%;overflow:auto}
+#toc.toc2 #toctitle{margin-top:0;margin-bottom:.8rem;font-size:1.2em}
+#toc.toc2>ul{font-size:.9em;margin-bottom:0}
+#toc.toc2 ul ul{margin-left:0;padding-left:1em}
+#toc.toc2 ul.sectlevel0 ul.sectlevel1{padding-left:0;margin-top:.5em;margin-bottom:.5em}
+body.toc2.toc-right{padding-left:0;padding-right:15em}
+body.toc2.toc-right #toc.toc2{border-right-width:0;border-left:1px solid #e7e7e9;left:auto;right:0}}
+@media screen and (min-width:1280px){body.toc2{padding-left:20em;padding-right:0}
+#toc.toc2{width:20em}
+#toc.toc2 #toctitle{font-size:1.375em}
+#toc.toc2>ul{font-size:.95em}
+#toc.toc2 ul ul{padding-left:1.25em}
+body.toc2.toc-right{padding-left:0;padding-right:20em}}
+#content #toc{border-style:solid;border-width:1px;border-color:#e0e0dc;margin-bottom:1.25em;padding:1.25em;background:#f8f8f7;-webkit-border-radius:4px;border-radius:4px}
+#content #toc>:first-child{margin-top:0}
+#content #toc>:last-child{margin-bottom:0}
+#footer{max-width:100%;background:rgba(0,0,0,.8);padding:1.25em}
+#footer-text{color:rgba(255,255,255,.8);line-height:1.44}
+#content{margin-bottom:.625em}
+.sect1{padding-bottom:.625em}
+@media screen and (min-width:768px){#content{margin-bottom:1.25em}
+.sect1{padding-bottom:1.25em}}
+.sect1:last-child{padding-bottom:0}
+.sect1+.sect1{border-top:1px solid #e7e7e9}
+#content h1>a.anchor,h2>a.anchor,h3>a.anchor,#toctitle>a.anchor,.sidebarblock>.content>.title>a.anchor,h4>a.anchor,h5>a.anchor,h6>a.anchor{position:absolute;z-index:1001;width:1.5ex;margin-left:-1.5ex;display:block;text-decoration:none!important;visibility:hidden;text-align:center;font-weight:400}
+#content h1>a.anchor::before,h2>a.anchor::before,h3>a.anchor::before,#toctitle>a.anchor::before,.sidebarblock>.content>.title>a.anchor::before,h4>a.anchor::before,h5>a.anchor::before,h6>a.anchor::before{content:"\00A7";font-size:.85em;display:block;padding-top:.1em}
+#content h1:hover>a.anchor,#content h1>a.anchor:hover,h2:hover>a.anchor,h2>a.anchor:hover,h3:hover>a.anchor,#toctitle:hover>a.anchor,.sidebarblock>.content>.title:hover>a.anchor,h3>a.anchor:hover,#toctitle>a.anchor:hover,.sidebarblock>.content>.title>a.anchor:hover,h4:hover>a.anchor,h4>a.anchor:hover,h5:hover>a.anchor,h5>a.anchor:hover,h6:hover>a.anchor,h6>a.anchor:hover{visibility:visible}
+#content h1>a.link,h2>a.link,h3>a.link,#toctitle>a.link,.sidebarblock>.content>.title>a.link,h4>a.link,h5>a.link,h6>a.link{color:#ba3925;text-decoration:none}
+#content h1>a.link:hover,h2>a.link:hover,h3>a.link:hover,#toctitle>a.link:hover,.sidebarblock>.content>.title>a.link:hover,h4>a.link:hover,h5>a.link:hover,h6>a.link:hover{color:#a53221}
+details,.audioblock,.imageblock,.literalblock,.listingblock,.stemblock,.videoblock{margin-bottom:1.25em}
+details>summary:first-of-type{cursor:pointer;display:list-item;outline:none;margin-bottom:.75em}
+.admonitionblock td.content>.title,.audioblock>.title,.exampleblock>.title,.imageblock>.title,.listingblock>.title,.literalblock>.title,.stemblock>.title,.openblock>.title,.paragraph>.title,.quoteblock>.title,table.tableblock>.title,.verseblock>.title,.videoblock>.title,.dlist>.title,.olist>.title,.ulist>.title,.qlist>.title,.hdlist>.title{text-rendering:optimizeLegibility;text-align:left;font-family:"Noto Serif","DejaVu Serif",serif;font-size:1rem;font-style:italic}
+table.tableblock.fit-content>caption.title{white-space:nowrap;width:0}
+.paragraph.lead>p,#preamble>.sectionbody>[class="paragraph"]:first-of-type p{font-size:1.21875em;line-height:1.6;color:rgba(0,0,0,.85)}
+table.tableblock #preamble>.sectionbody>[class="paragraph"]:first-of-type p{font-size:inherit}
+.admonitionblock>table{border-collapse:separate;border:0;background:none;width:100%}
+.admonitionblock>table td.icon{text-align:center;width:80px}
+.admonitionblock>table td.icon img{max-width:none}
+.admonitionblock>table td.icon .title{font-weight:bold;font-family:"Open Sans","DejaVu Sans",sans-serif;text-transform:uppercase}
+.admonitionblock>table td.content{padding-left:1.125em;padding-right:1.25em;border-left:1px solid #dddddf;color:rgba(0,0,0,.6)}
+.admonitionblock>table td.content>:last-child>:last-child{margin-bottom:0}
+.exampleblock>.content{border-style:solid;border-width:1px;border-color:#e6e6e6;margin-bottom:1.25em;padding:1.25em;background:#fff;-webkit-border-radius:4px;border-radius:4px}
+.exampleblock>.content>:first-child{margin-top:0}
+.exampleblock>.content>:last-child{margin-bottom:0}
+.sidebarblock{border-style:solid;border-width:1px;border-color:#dbdbd6;margin-bottom:1.25em;padding:1.25em;background:#f3f3f2;-webkit-border-radius:4px;border-radius:4px}
+.sidebarblock>:first-child{margin-top:0}
+.sidebarblock>:last-child{margin-bottom:0}
+.sidebarblock>.content>.title{color:#7a2518;margin-top:0;text-align:center}
+.exampleblock>.content>:last-child>:last-child,.exampleblock>.content .olist>ol>li:last-child>:last-child,.exampleblock>.content .ulist>ul>li:last-child>:last-child,.exampleblock>.content .qlist>ol>li:last-child>:last-child,.sidebarblock>.content>:last-child>:last-child,.sidebarblock>.content .olist>ol>li:last-child>:last-child,.sidebarblock>.content .ulist>ul>li:last-child>:last-child,.sidebarblock>.content .qlist>ol>li:last-child>:last-child{margin-bottom:0}
+.literalblock pre,.listingblock>.content>pre{-webkit-border-radius:4px;border-radius:4px;word-wrap:break-word;overflow-x:auto;padding:1em;font-size:.8125em}
+@media screen and (min-width:768px){.literalblock pre,.listingblock>.content>pre{font-size:.90625em}}
+@media screen and (min-width:1280px){.literalblock pre,.listingblock>.content>pre{font-size:1em}}
+.literalblock pre,.listingblock>.content>pre:not(.highlight),.listingblock>.content>pre[class="highlight"],.listingblock>.content>pre[class^="highlight "]{background:#f7f7f8}
+.literalblock.output pre{color:#f7f7f8;background:rgba(0,0,0,.9)}
+.listingblock>.content{position:relative}
+.listingblock code[data-lang]::before{display:none;content:attr(data-lang);position:absolute;font-size:.75em;top:.425rem;right:.5rem;line-height:1;text-transform:uppercase;color:inherit;opacity:.5}
+.listingblock:hover code[data-lang]::before{display:block}
+.listingblock.terminal pre .command::before{content:attr(data-prompt);padding-right:.5em;color:inherit;opacity:.5}
+.listingblock.terminal pre .command:not([data-prompt])::before{content:"$"}
+.listingblock pre.highlightjs{padding:0}
+.listingblock pre.highlightjs>code{padding:1em;-webkit-border-radius:4px;border-radius:4px}
+.listingblock pre.prettyprint{border-width:0}
+.prettyprint{background:#f7f7f8}
+pre.prettyprint .linenums{line-height:1.45;margin-left:2em}
+pre.prettyprint li{background:none;list-style-type:inherit;padding-left:0}
+pre.prettyprint li code[data-lang]::before{opacity:1}
+pre.prettyprint li:not(:first-child) code[data-lang]::before{display:none}
+table.linenotable{border-collapse:separate;border:0;margin-bottom:0;background:none}
+table.linenotable td[class]{color:inherit;vertical-align:top;padding:0;line-height:inherit;white-space:normal}
+table.linenotable td.code{padding-left:.75em}
+table.linenotable td.linenos{border-right:1px solid currentColor;opacity:.35;padding-right:.5em}
+pre.pygments .lineno{border-right:1px solid currentColor;opacity:.35;display:inline-block;margin-right:.75em}
+pre.pygments .lineno::before{content:"";margin-right:-.125em}
+.quoteblock{margin:0 1em 1.25em 1.5em;display:table}
+.quoteblock:not(.excerpt)>.title{margin-left:-1.5em;margin-bottom:.75em}
+.quoteblock blockquote,.quoteblock p{color:rgba(0,0,0,.85);font-size:1.15rem;line-height:1.75;word-spacing:.1em;letter-spacing:0;font-style:italic;text-align:justify}
+.quoteblock blockquote{margin:0;padding:0;border:0}
+.quoteblock blockquote::before{content:"\201c";float:left;font-size:2.75em;font-weight:bold;line-height:.6em;margin-left:-.6em;color:#7a2518;text-shadow:0 1px 2px rgba(0,0,0,.1)}
+.quoteblock blockquote>.paragraph:last-child p{margin-bottom:0}
+.quoteblock .attribution{margin-top:.75em;margin-right:.5ex;text-align:right}
+.verseblock{margin:0 1em 1.25em}
+.verseblock pre{font-family:"Open Sans","DejaVu Sans",sans;font-size:1.15rem;color:rgba(0,0,0,.85);font-weight:300;text-rendering:optimizeLegibility}
+.verseblock pre strong{font-weight:400}
+.verseblock .attribution{margin-top:1.25rem;margin-left:.5ex}
+.quoteblock .attribution,.verseblock .attribution{font-size:.9375em;line-height:1.45;font-style:italic}
+.quoteblock .attribution br,.verseblock .attribution br{display:none}
+.quoteblock .attribution cite,.verseblock .attribution cite{display:block;letter-spacing:-.025em;color:rgba(0,0,0,.6)}
+.quoteblock.abstract blockquote::before,.quoteblock.excerpt blockquote::before,.quoteblock .quoteblock blockquote::before{display:none}
+.quoteblock.abstract blockquote,.quoteblock.abstract p,.quoteblock.excerpt blockquote,.quoteblock.excerpt p,.quoteblock .quoteblock blockquote,.quoteblock .quoteblock p{line-height:1.6;word-spacing:0}
+.quoteblock.abstract{margin:0 1em 1.25em;display:block}
+.quoteblock.abstract>.title{margin:0 0 .375em;font-size:1.15em;text-align:center}
+.quoteblock.excerpt>blockquote,.quoteblock .quoteblock{padding:0 0 .25em 1em;border-left:.25em solid #dddddf}
+.quoteblock.excerpt,.quoteblock .quoteblock{margin-left:0}
+.quoteblock.excerpt blockquote,.quoteblock.excerpt p,.quoteblock .quoteblock blockquote,.quoteblock .quoteblock p{color:inherit;font-size:1.0625rem}
+.quoteblock.excerpt .attribution,.quoteblock .quoteblock .attribution{color:inherit;text-align:left;margin-right:0}
+table.tableblock{max-width:100%;border-collapse:separate}
+p.tableblock:last-child{margin-bottom:0}
+td.tableblock>.content{margin-bottom:1.25em}
+td.tableblock>.content>:last-child{margin-bottom:-1.25em}
+table.tableblock,th.tableblock,td.tableblock{border:0 solid #dedede}
+table.grid-all>thead>tr>.tableblock,table.grid-all>tbody>tr>.tableblock{border-width:0 1px 1px 0}
+table.grid-all>tfoot>tr>.tableblock{border-width:1px 1px 0 0}
+table.grid-cols>*>tr>.tableblock{border-width:0 1px 0 0}
+table.grid-rows>thead>tr>.tableblock,table.grid-rows>tbody>tr>.tableblock{border-width:0 0 1px}
+table.grid-rows>tfoot>tr>.tableblock{border-width:1px 0 0}
+table.grid-all>*>tr>.tableblock:last-child,table.grid-cols>*>tr>.tableblock:last-child{border-right-width:0}
+table.grid-all>tbody>tr:last-child>.tableblock,table.grid-all>thead:last-child>tr>.tableblock,table.grid-rows>tbody>tr:last-child>.tableblock,table.grid-rows>thead:last-child>tr>.tableblock{border-bottom-width:0}
+table.frame-all{border-width:1px}
+table.frame-sides{border-width:0 1px}
+table.frame-topbot,table.frame-ends{border-width:1px 0}
+table.stripes-all tr,table.stripes-odd tr:nth-of-type(odd),table.stripes-even tr:nth-of-type(even),table.stripes-hover tr:hover{background:#f8f8f7}
+th.halign-left,td.halign-left{text-align:left}
+th.halign-right,td.halign-right{text-align:right}
+th.halign-center,td.halign-center{text-align:center}
+th.valign-top,td.valign-top{vertical-align:top}
+th.valign-bottom,td.valign-bottom{vertical-align:bottom}
+th.valign-middle,td.valign-middle{vertical-align:middle}
+table thead th,table tfoot th{font-weight:bold}
+tbody tr th{display:table-cell;line-height:1.6;background:#f7f8f7}
+tbody tr th,tbody tr th p,tfoot tr th,tfoot tr th p{color:rgba(0,0,0,.8);font-weight:bold}
+p.tableblock>code:only-child{background:none;padding:0}
+p.tableblock{font-size:1em}
+ol{margin-left:1.75em}
+ul li ol{margin-left:1.5em}
+dl dd{margin-left:1.125em}
+dl dd:last-child,dl dd:last-child>:last-child{margin-bottom:0}
+ol>li p,ul>li p,ul dd,ol dd,.olist .olist,.ulist .ulist,.ulist .olist,.olist .ulist{margin-bottom:.625em}
+ul.checklist,ul.none,ol.none,ul.no-bullet,ol.no-bullet,ol.unnumbered,ul.unstyled,ol.unstyled{list-style-type:none}
+ul.no-bullet,ol.no-bullet,ol.unnumbered{margin-left:.625em}
+ul.unstyled,ol.unstyled{margin-left:0}
+ul.checklist{margin-left:.625em}
+ul.checklist li>p:first-child>.fa-square-o:first-child,ul.checklist li>p:first-child>.fa-check-square-o:first-child{width:1.25em;font-size:.8em;position:relative;bottom:.125em}
+ul.checklist li>p:first-child>input[type="checkbox"]:first-child{margin-right:.25em}
+ul.inline{display:-ms-flexbox;display:-webkit-box;display:flex;-ms-flex-flow:row wrap;-webkit-flex-flow:row wrap;flex-flow:row wrap;list-style:none;margin:0 0 .625em -1.25em}
+ul.inline>li{margin-left:1.25em}
+.unstyled dl dt{font-weight:400;font-style:normal}
+ol.arabic{list-style-type:decimal}
+ol.decimal{list-style-type:decimal-leading-zero}
+ol.loweralpha{list-style-type:lower-alpha}
+ol.upperalpha{list-style-type:upper-alpha}
+ol.lowerroman{list-style-type:lower-roman}
+ol.upperroman{list-style-type:upper-roman}
+ol.lowergreek{list-style-type:lower-greek}
+.hdlist>table,.colist>table{border:0;background:none}
+.hdlist>table>tbody>tr,.colist>table>tbody>tr{background:none}
+td.hdlist1,td.hdlist2{vertical-align:top;padding:0 .625em}
+td.hdlist1{font-weight:bold;padding-bottom:1.25em}
+.literalblock+.colist,.listingblock+.colist{margin-top:-.5em}
+.colist td:not([class]):first-child{padding:.4em .75em 0;line-height:1;vertical-align:top}
+.colist td:not([class]):first-child img{max-width:none}
+.colist td:not([class]):last-child{padding:.25em 0}
+.thumb,.th{line-height:0;display:inline-block;border:solid 4px #fff;-webkit-box-shadow:0 0 0 1px #ddd;box-shadow:0 0 0 1px #ddd}
+.imageblock.left{margin:.25em .625em 1.25em 0}
+.imageblock.right{margin:.25em 0 1.25em .625em}
+.imageblock>.title{margin-bottom:0}
+.imageblock.thumb,.imageblock.th{border-width:6px}
+.imageblock.thumb>.title,.imageblock.th>.title{padding:0 .125em}
+.image.left,.image.right{margin-top:.25em;margin-bottom:.25em;display:inline-block;line-height:0}
+.image.left{margin-right:.625em}
+.image.right{margin-left:.625em}
+a.image{text-decoration:none;display:inline-block}
+a.image object{pointer-events:none}
+sup.footnote,sup.footnoteref{font-size:.875em;position:static;vertical-align:super}
+sup.footnote a,sup.footnoteref a{text-decoration:none}
+sup.footnote a:active,sup.footnoteref a:active{text-decoration:underline}
+#footnotes{padding-top:.75em;padding-bottom:.75em;margin-bottom:.625em}
+#footnotes hr{width:20%;min-width:6.25em;margin:-.25em 0 .75em;border-width:1px 0 0}
+#footnotes .footnote{padding:0 .375em 0 .225em;line-height:1.3334;font-size:.875em;margin-left:1.2em;margin-bottom:.2em}
+#footnotes .footnote a:first-of-type{font-weight:bold;text-decoration:none;margin-left:-1.05em}
+#footnotes .footnote:last-of-type{margin-bottom:0}
+#content #footnotes{margin-top:-.625em;margin-bottom:0;padding:.75em 0}
+.gist .file-data>table{border:0;background:#fff;width:100%;margin-bottom:0}
+.gist .file-data>table td.line-data{width:99%}
+div.unbreakable{page-break-inside:avoid}
+.big{font-size:larger}
+.small{font-size:smaller}
+.underline{text-decoration:underline}
+.overline{text-decoration:overline}
+.line-through{text-decoration:line-through}
+.aqua{color:#00bfbf}
+.aqua-background{background:#00fafa}
+.black{color:#000}
+.black-background{background:#000}
+.blue{color:#0000bf}
+.blue-background{background:#0000fa}
+.fuchsia{color:#bf00bf}
+.fuchsia-background{background:#fa00fa}
+.gray{color:#606060}
+.gray-background{background:#7d7d7d}
+.green{color:#006000}
+.green-background{background:#007d00}
+.lime{color:#00bf00}
+.lime-background{background:#00fa00}
+.maroon{color:#600000}
+.maroon-background{background:#7d0000}
+.navy{color:#000060}
+.navy-background{background:#00007d}
+.olive{color:#606000}
+.olive-background{background:#7d7d00}
+.purple{color:#600060}
+.purple-background{background:#7d007d}
+.red{color:#bf0000}
+.red-background{background:#fa0000}
+.silver{color:#909090}
+.silver-background{background:#bcbcbc}
+.teal{color:#006060}
+.teal-background{background:#007d7d}
+.white{color:#bfbfbf}
+.white-background{background:#fafafa}
+.yellow{color:#bfbf00}
+.yellow-background{background:#fafa00}
+span.icon>.fa{cursor:default}
+a span.icon>.fa{cursor:inherit}
+.admonitionblock td.icon [class^="fa icon-"]{font-size:2.5em;text-shadow:1px 1px 2px rgba(0,0,0,.5);cursor:default}
+.admonitionblock td.icon .icon-note::before{content:"\f05a";color:#19407c}
+.admonitionblock td.icon .icon-tip::before{content:"\f0eb";text-shadow:1px 1px 2px rgba(155,155,0,.8);color:#111}
+.admonitionblock td.icon .icon-warning::before{content:"\f071";color:#bf6900}
+.admonitionblock td.icon .icon-caution::before{content:"\f06d";color:#bf3400}
+.admonitionblock td.icon .icon-important::before{content:"\f06a";color:#bf0000}
+.conum[data-value]{display:inline-block;color:#fff!important;background:rgba(0,0,0,.8);-webkit-border-radius:50%;border-radius:50%;text-align:center;font-size:.75em;width:1.67em;height:1.67em;line-height:1.67em;font-family:"Open Sans","DejaVu Sans",sans-serif;font-style:normal;font-weight:bold}
+.conum[data-value] *{color:#fff!important}
+.conum[data-value]+b{display:none}
+.conum[data-value]::after{content:attr(data-value)}
+pre .conum[data-value]{position:relative;top:-.125em}
+b.conum *{color:inherit!important}
+.conum:not([data-value]):empty{display:none}
+dt,th.tableblock,td.content,div.footnote{text-rendering:optimizeLegibility}
+h1,h2,p,td.content,span.alt{letter-spacing:-.01em}
+p strong,td.content strong,div.footnote strong{letter-spacing:-.005em}
+p,blockquote,dt,td.content,span.alt{font-size:1.0625rem}
+p{margin-bottom:1.25rem}
+.sidebarblock p,.sidebarblock dt,.sidebarblock td.content,p.tableblock{font-size:1em}
+.exampleblock>.content{background:#fffef7;border-color:#e0e0dc;-webkit-box-shadow:0 1px 4px #e0e0dc;box-shadow:0 1px 4px #e0e0dc}
+.print-only{display:none!important}
+@page{margin:1.25cm .75cm}
+@media print{*{-webkit-box-shadow:none!important;box-shadow:none!important;text-shadow:none!important}
+html{font-size:80%}
+a{color:inherit!important;text-decoration:underline!important}
+a.bare,a[href^="#"],a[href^="mailto:"]{text-decoration:none!important}
+a[href^="http:"]:not(.bare)::after,a[href^="https:"]:not(.bare)::after{content:"(" attr(href) ")";display:inline-block;font-size:.875em;padding-left:.25em}
+abbr[title]::after{content:" (" attr(title) ")"}
+pre,blockquote,tr,img,object,svg{page-break-inside:avoid}
+thead{display:table-header-group}
+svg{max-width:100%}
+p,blockquote,dt,td.content{font-size:1em;orphans:3;widows:3}
+h2,h3,#toctitle,.sidebarblock>.content>.title{page-break-after:avoid}
+#toc,.sidebarblock,.exampleblock>.content{background:none!important}
+#toc{border-bottom:1px solid #dddddf!important;padding-bottom:0!important}
+body.book #header{text-align:center}
+body.book #header>h1:first-child{border:0!important;margin:2.5em 0 1em}
+body.book #header .details{border:0!important;display:block;padding:0!important}
+body.book #header .details span:first-child{margin-left:0!important}
+body.book #header .details br{display:block}
+body.book #header .details br+span::before{content:none!important}
+body.book #toc{border:0!important;text-align:left!important;padding:0!important;margin:0!important}
+body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-break-before:always}
+.listingblock code[data-lang]::before{display:block}
+#footer{padding:0 .9375em}
+.hide-on-print{display:none!important}
+.print-only{display:block!important}
+.hide-for-print{display:none!important}
+.show-for-print{display:inherit!important}}
+@media print,amzn-kf8{#header>h1:first-child{margin-top:1.25rem}
+.sect1{padding:0!important}
+.sect1+.sect1{border:0}
+#footer{background:none}
+#footer-text{color:rgba(0,0,0,.6);font-size:.9em}}
+@media amzn-kf8{#header,#content,#footnotes,#footer{padding:0}}
+</style>
+</head>
+<body class="article toc2 toc-left">
+<div id="header">
+<h1>[下書き] LLVMバックエンド開発文書 for CAHPv3</h1>
+<div class="details">
+<span id="author" class="author">艮鮟鱇</span><br>
+<span id="email" class="email"><a href="mailto:ushitora@anqou.net">ushitora@anqou.net</a></span><br>
+</div>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_これはなに">これはなに</a></li>
+<li><a href="#_簡単使い方">簡単使い方</a>
+<ul class="sectlevel2">
+<li><a href="#_ビルドする">ビルドする</a></li>
+<li><a href="#_アセンブラを使う">アセンブラを使う</a></li>
+<li><a href="#_コンパイラを起動する">コンパイラを起動する</a></li>
+</ul>
+</li>
+<li><a href="#_概要">概要</a></li>
+<li><a href="#_ところで">ところで</a></li>
+<li><a href="#_参考にすべき資料">参考にすべき資料</a>
+<ul class="sectlevel2">
+<li><a href="#_webページ">Webページ</a></li>
+<li><a href="#_書籍">書籍</a></li>
+<li><a href="#_バックエンド">バックエンド</a></li>
+</ul>
+</li>
+<li><a href="#_cahpv3アーキテクチャ仕様">CAHPv3アーキテクチャ仕様</a></li>
+<li><a href="#_llvmをテストする">LLVMをテストする</a></li>
+<li><a href="#_llvmバックエンドの流れ">LLVMバックエンドの流れ</a></li>
+<li><a href="#_llvmのソースコードを用意する">LLVMのソースコードを用意する</a></li>
+<li><a href="#_スケルトンバックエンドを追加する">スケルトンバックエンドを追加する</a></li>
+<li><a href="#_簡易的なアセンブラを実装する">簡易的なアセンブラを実装する</a></li>
+<li><a href="#_cahpinstprinter_を実装する"><code>CAHPInstPrinter</code> を実装する</a></li>
+<li><a href="#_テストを書く">テストを書く</a></li>
+<li><a href="#_メモリ演算を追加する">メモリ演算を追加する</a></li>
+<li><a href="#_属性を指定する">属性を指定する</a></li>
+<li><a href="#_ディスアセンブラを実装する">ディスアセンブラを実装する</a></li>
+<li><a href="#_relocationとfixupに対応する">relocationとfixupに対応する</a></li>
+<li><a href="#_hilo_に対応する"><code>%hi/%lo</code> に対応する</a></li>
+<li><a href="#_コンパイラのスケルトンを作成する">コンパイラのスケルトンを作成する</a></li>
+<li><a href="#_基本的な演算に対応する">基本的な演算に対応する</a></li>
+<li><a href="#_定数の実体化に対応する">定数の実体化に対応する</a></li>
+<li><a href="#_メモリ演算に対応する">メモリ演算に対応する</a></li>
+<li><a href="#_relocationに対応する">relocationに対応する</a></li>
+<li><a href="#_条件分岐に対応する">条件分岐に対応する</a></li>
+<li><a href="#_関数呼び出しに対応する">関数呼び出しに対応する</a></li>
+<li><a href="#_関数プロローグエピローグを実装する">関数プロローグ・エピローグを実装する</a></li>
+<li><a href="#_frame_pointer_eliminationを実装する">frame pointer eliminationを実装する</a></li>
+<li><a href="#_select_に対応する"><code>select</code> に対応する</a></li>
+<li><a href="#_frameindex_をlowerする"><code>FrameIndex</code> をlowerする。</a></li>
+<li><a href="#_大きなスタックフレームに対応する">大きなスタックフレームに対応する</a></li>
+<li><a href="#_setcc_に対応する"><code>SETCC</code> に対応する</a></li>
+<li><a href="#_externalsymbol_に対応する"><code>ExternalSymbol</code> に対応する</a></li>
+<li><a href="#_jump_tableを無効化する">jump tableを無効化する</a></li>
+<li><a href="#_lldにバックエンドを追加する">lldにバックエンドを追加する</a></li>
+<li><a href="#_16bit命令を活用する">16bit命令を活用する</a>
+<ul class="sectlevel2">
+<li><a href="#_compresspat_の調査"><code>CompressPat</code> の調査</a></li>
+<li><a href="#_compresspat_をcahpに導入する"><code>CompressPat</code> をCAHPに導入する</a></li>
+</ul>
+</li>
+<li><a href="#_clangをcahpに対応させる">ClangをCAHPに対応させる</a></li>
+<li><a href="#_分岐解析に対応する">分岐解析に対応する</a></li>
+<li><a href="#_インラインアセンブリに対応する">インラインアセンブリに対応する</a></li>
+<li><a href="#_branch_relaxationに対応する">branch relaxationに対応する</a></li>
+<li><a href="#_単体の_sextzexttrunc_に対応する">単体の <code>sext/zext/trunc</code> に対応する</a></li>
+<li><a href="#_fastccに対応する">fastccに対応する</a></li>
+<li><a href="#_jal_を活用する"><code>jal</code> を活用する</a></li>
+<li><a href="#_乗算に対応する">乗算に対応する</a></li>
+<li><a href="#_除算剰余に対応する">除算・剰余に対応する</a></li>
+<li><a href="#_hlt_疑似命令を追加する"><code>hlt</code> 疑似命令を追加する</a></li>
+<li><a href="#_crt0_o_と_cahp_lds_の導入"><code>crt0.o</code> と <code>cahp.lds</code> の導入</a></li>
+<li><a href="#_nmagic_の有効化"><code>--nmagic</code> の有効化</a></li>
+<li><a href="#_libcの有効化">libcの有効化</a></li>
+<li><a href="#_li_a0_foo_をエラーにする"><code>li a0, foo</code> をエラーにする</a></li>
+<li><a href="#_llvm_objdump_の調査"><code>llvm-objdump</code> の調査</a></li>
+<li><a href="#_スタックを利用した引数渡し">スタックを利用した引数渡し</a></li>
+<li><a href="#_byval_の対応"><code>byval</code> の対応</a></li>
+<li><a href="#_命令スケジューリングの実装">命令スケジューリングの実装</a></li>
+<li><a href="#_動的なスタック領域確保に対応する">動的なスタック領域確保に対応する</a></li>
+<li><a href="#_frameaddrreturnaddr_に対応する"><code>frameaddr/returnaddr</code> に対応する</a></li>
+<li><a href="#_emergency_spillに対応する">emergency spillに対応する</a></li>
+<li><a href="#_done_line">-----DONE LINE -----</a></li>
+<li><a href="#_末尾再帰の対応">末尾再帰の対応</a></li>
+<li><a href="#_落ち穂拾い">落ち穂拾い</a>
+<ul class="sectlevel2">
+<li><a href="#_rotlrotrbswapcttzctlzctpop_に対応する"><code>ROTL/ROTR/BSWAP/CTTZ/CTLZ/CTPOP</code> に対応する</a></li>
+<li><a href="#_32bitのシフトに対応する">32bitのシフトに対応する</a></li>
+<li><a href="#_間接ジャンプに対応する">間接ジャンプに対応する</a></li>
+<li><a href="#_blockaddress_のlowerに対応する"><code>BlockAddress</code> のlowerに対応する</a></li>
+</ul>
+</li>
+<li><a href="#_可変長引数関数">可変長引数関数</a></li>
+<li><a href="#_デバッグ情報の出力">デバッグ情報の出力</a></li>
+<li><a href="#_machineblockplacement_のrollbackllvm_phabricator_d43256"><code>MachineBlockPlacement</code> のrollback[llvm_phabricator-d43256]</a></li>
+<li><a href="#_参照">参照</a></li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div class="sect1">
+<h2 id="_これはなに">これはなに</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>2019年にCAHPv3という自作ISA用のLLVMバックエンドを作ったときの自分とメンバ用のメモ。
+メモなので当然読みにくい。これをブラッシュアップしてまともな文章にする予定だったが、
+その作業が遅れているので、一旦メモのまま公開する。内容について質問したい場合は
+Twitter <a href="https://twitter.com/ushitora_anqou">@ushitora_anqou</a>までリプライなどを貰えれば反応するかもしれない。</p>
+</div>
+<div class="paragraph">
+<p>この文章は、前に作ったRV16Kv2及びRV32Kv1用LLVMバックエンドで得た知識を前提にして書かれている。
+RV16Kv2のメモは<a href="#draft-rv16kv2.adoc">[draft-rv16kv2.adoc]</a>を参照のこと。
+RV32Kv1のメモは<a href="#draft-rv32kv1.adoc">[draft-rv32kv1.adoc]</a>を参照のこと。</p>
+</div>
+<div class="paragraph">
+<p>ソースコードは<a href="https://github.com/virtualsecureplatform/llvm-cahp">GitHub</a>にある。</p>
+</div>
+<div class="paragraph">
+<p>ブラッシュアップは<a href="https://github.com/ushitora-anqou/write-your-llvm-backend">GitHub</a>にて行っている。</p>
+</div>
+<div class="paragraph">
+<p>このLLVMバックエンドの開発は、もともと2019年度未踏事業において
+<a href="https://github.com/virtualsecureplatform/kvsp">Virtual Secure Platform</a>を開発するために行われた。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_簡単使い方">簡単使い方</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_ビルドする">ビルドする</h3>
+<div class="paragraph">
+<p>とりあえずビルドする。ビルドには</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>cmake</code></p>
+</li>
+<li>
+<p><code>ninja</code></p>
+</li>
+<li>
+<p><code>clang</code></p>
+</li>
+<li>
+<p><code>clang++</code></p>
+</li>
+<li>
+<p><code>make</code></p>
+</li>
+<li>
+<p><code>lld</code></p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>が必要。</p>
+</div>
+<div class="paragraph">
+<p>これらを入れた後 <code>cmake</code> を次のように走らせる。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ cd /path/to/llvm-project
+$ mkdir build
+$ cd build
+$ cmake -G Ninja \
+    -DLLVM_ENABLE_PROJECTS="lld;clang" \
+    -DCMAKE_BUILD_TYPE="Release" \
+    -DLLVM_BUILD_TESTS=True \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLLVM_USE_LINKER=lld \
+    -DLLVM_TARGETS_TO_BUILD="" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="CAHP" \
+    ../llvm
+$ cmake --build .</pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_アセンブラを使う">アセンブラを使う</h3>
+<div class="paragraph">
+<p>アセンブラを起動する。アセンブラは <code>build/bin/llvm-mc</code> である。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre># オブジェクトファイルにアセンブル
+$ bin/llvm-mc -arch=cahp -filetype=obj foo.s | od -tx1z -Ax -v
+
+# コメント表示の機械語にアセンブル
+$ bin/llvm-mc -arch=cahp -show-encoding foo.s
+
+# オブジェクトファイルにアセンブルしたものを逆アセンブル
+$ bin/llvm-mc -filetype=obj -triple=cahp foo.s | bin/llvm-objdump -d -</pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_コンパイラを起動する">コンパイラを起動する</h3>
+<div class="paragraph">
+<p>まずランタイムライブラリをビルドする必要がある。cahp-rtレポジトリを <code>git clone</code> し
+<code>CC=/path/to/bin/clang</code> をつけて <code>make</code> する。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre># cahp-rt レポジトリをcloneする。
+$ git clone git@github.com:ushitora-anqou/cahp-rt.git
+
+# cahp-rt をビルドする。 CC 環境変数で、先程ビルドしたclangを指定する。
+$ cd cahp-rt
+$ CC=/path/to/bin/clang make</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>以下のようなCプログラム <code>foo.c</code> を <code>clang</code> を用いてコンパイルする。
+コンパイル時に <code>--sysroot</code> オプションを用いて、先程ビルドしたcahp-rtのディレクトリを指定する。
+なおバイナリサイズを小さくしたい場合は <code>-Oz</code> オプションを指定するなどすればよい。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ cat foo.c
+int hoge;
+
+int main()
+{
+    hoge = 42;
+    return hoge;
+}
+
+$ bin/clang -target cahp foo.c -o foo.exe --sysroot=/path/to/cahp-rt</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>llvm-readelf</code> を用いて <code>.text</code> その他のサイズが分かる。
+これがROMサイズ（ <code>0x200 = 512</code> ）未満であることを確認する。</p>
+</div>
+<div class="paragraph">
+<p>実行結果はRISC-Vのもの。TODO</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ bin/llvm-readelf -S foo.exe
+There are 7 section headers, starting at offset 0x10f0:
+
+Section Headers:
+  [Nr] Name              Type            Address  Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .text             PROGBITS        00000000 001000 00002e 00  AX  0   0  4
+  [ 2] .bss              NOBITS          00010000 00102e 000002 00  WA  0   0  2
+  [ 3] .comment          PROGBITS        00000000 00102e 000028 01  MS  0   0  1
+  [ 4] .symtab           SYMTAB          00000000 001058 000050 10      6   2  4
+  [ 5] .shstrtab         STRTAB          00000000 0010a8 00002f 00      0   0  1
+  [ 6] .strtab           STRTAB          00000000 0010d7 000018 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), l (large)
+  I (info), L (link order), G (group), T (TLS), E (exclude), x (unknown)
+  O (extra OS processing required) o (OS specific), p (processor specific)</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>llvm-objdump</code> を用いて逆アセンブルを行うことができる。</p>
+</div>
+<div class="paragraph">
+<p>実行結果はRISC-Vのもの。TODO</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ bin/llvm-objdump -d foo.exe
+
+foo.exe:	file format ELF32-cahp
+
+Disassembly of section .text:
+0000000000000000 _start:
+       0:	00 73 06 00 	jal	6
+       4:	00 52 fe ff 	j	-2
+
+0000000000000008 main:
+       8:	c1 f2 	addi	sp, -4
+       a:	21 80 	swsp	fp, 2(sp)
+       c:	12 e0 	mov	fp, sp
+       e:	42 f2 	addi	fp, 4
+      10:	08 78 00 00 	li	a0, 0
+      14:	82 92 fc ff 	sw	a0, -4(fp)
+      18:	08 78 00 00 	li	a0, 0
+      1c:	88 b2 00 00 	lw	a0, 0(a0)
+      20:	12 a0 	lwsp	fp, 2(sp)
+      22:	41 f2 	addi	sp, 4
+      24:	00 40 	jr	ra</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>cahp-sim</code> を使ってシミュレーションを行う。</p>
+</div>
+<div class="paragraph">
+<p>実行結果はRISC-Vのもの。TODO</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ /path/to/cahp-sim/main foo.exe 20
+ROM: 0000 0073
+ROM: 0002 0600
+ROM: 0004 0052
+ROM: 0006 FEFF
+ROM: 0008 C1F2
+ROM: 000A 2180
+ROM: 000C 12E0
+ROM: 000E 42F2
+ROM: 0010 0878
+ROM: 0012 0000
+ROM: 0014 8292
+ROM: 0016 FCFF
+ROM: 0018 0878
+ROM: 001A 0000
+ROM: 001C 88B2
+ROM: 001E 0000
+ROM: 0020 12A0
+ROM: 0022 41F2
+ROM: 0024 0040
+
+RAM: 0000 2A00
+
+Inst:JAL	PC &lt;= 0x0002 Reg x0 &lt;= 0x0004 PC &lt;= 0x0008 FLAGS(SZCV) &lt;= 0000
+Inst:ADDI	Reg x1 &lt;= 0x01FA PC &lt;= 0x000A FLAGS(SZCV) &lt;= 0000
+Inst:SWSP	DataRam[0x01FC] &lt;= 0x0000 DataRam[0x01FD] &lt;= 0x0000 PC &lt;= 0x000C FLAGS(SZCV) &lt;= 0010
+Inst:MOV	Reg x2 &lt;= 0x01FA PC &lt;= 0x000E FLAGS(SZCV) &lt;= 0000
+Inst:ADDI	Reg x2 &lt;= 0x01FE PC &lt;= 0x0010 FLAGS(SZCV) &lt;= 0010
+Inst:LI	PC &lt;= 0x0012 Reg x8 &lt;= 0x0000 PC &lt;= 0x0014 FLAGS(SZCV) &lt;= 0100
+Inst:SW	PC &lt;= 0x0016 DataRam[0x01FA] &lt;= 0x0000 DataRam[0x01FB] &lt;= 0x0000 PC &lt;= 0x0018 FLAGS(SZCV) &lt;= 0000
+Inst:LI	PC &lt;= 0x001A Reg x8 &lt;= 0x0000 PC &lt;= 0x001C FLAGS(SZCV) &lt;= 0100
+Inst:LW	PC &lt;= 0x001E Reg x8 &lt;= 0x002A PC &lt;= 0x0020 FLAGS(SZCV) &lt;= 0110
+Inst:LWSP	Reg x2 &lt;= 0x0000 PC &lt;= 0x0022 FLAGS(SZCV) &lt;= 0010
+Inst:ADDI	Reg x1 &lt;= 0x01FE PC &lt;= 0x0024 FLAGS(SZCV) &lt;= 0010
+Inst:JR	PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+Inst:J	PC &lt;= 0x0006 PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+Inst:J	PC &lt;= 0x0006 PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+Inst:J	PC &lt;= 0x0006 PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+Inst:J	PC &lt;= 0x0006 PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+Inst:J	PC &lt;= 0x0006 PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+Inst:J	PC &lt;= 0x0006 PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+Inst:J	PC &lt;= 0x0006 PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+Inst:J	PC &lt;= 0x0006 PC &lt;= 0x0004 FLAGS(SZCV) &lt;= 0000
+x0=4	x1=510	x2=0	x3=0	x4=0	x5=0	x6=0	x7=0	x8=42	x9=0	x10=0	x11=0	x12=0	x13=0	x14=0	x15=0</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>x8=42</code> とあるので、正しく実行されていることが分かる。</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_概要">概要</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>これを読めば自作アーキテクチャ（CAHPv3）の機械語を出力するLLVMバックエンドを作成することができる。
+VSP開発のバス係数を高める意義がある。</p>
+</div>
+<div class="paragraph">
+<p>この文書はAsciiDocを用いて記述されている。
+記述方法についてはリファレンス<a href="#asciidoctor_user-manual">[4]</a><a href="#asciidoctor-quickref">[84]</a>を参照のこと。</p>
+</div>
+<div class="paragraph">
+<p>もう3回目なので差分しかかかない。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_ところで">ところで</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>一度もコンパイラを書いたことがない人は、この文書を読む前に
+『低レイヤを知りたい人のためのCコンパイラ作成入門』<a href="#rui-compilerbook">[50]</a>などで一度
+フルスクラッチからコンパイラを書くことをおすすめします。</p>
+</div>
+<div class="paragraph">
+<p>また<a href="#krister-writing_gcc_backend">[51]</a>などを参考に、
+LLVMではなくGCCにバックエンドを追加することも検討してみてはいかがでしょうか。
+意外とGCCのほうが楽かもしれませんよ？</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_参考にすべき資料">参考にすべき資料</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_webページ">Webページ</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Writing an LLVM Backend<a href="#llvm-writing_backend">[18]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>分かりにくく読みにくい。正直あんまり見ていないが、たまに眺めると有益な情報を見つけたりもする。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>The LLVM Target-Independent Code Generator<a href="#llvm-code_generator">[31]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="#llvm-writing_backend">[18]</a>よりもよほど参考になる。LLVMバックエンドがどのようにLLVM IRをアセンブリに落とすかが明記されている。必読。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>TableGenのLLVMのドキュメント<a href="#llvm-tablegen">[21]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>情報量が少ない。これを読むよりも各種バックエンドのTableGenファイルを読むほうが良い。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>LLVM Language Reference Manual<a href="#llvm-langref">[43]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>LLVM IRについての言語リファレンス。LLVM IRの仕様などを参照できる。必要に応じて読む。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Architecture &amp; Platform Information for Compiler Writers<a href="#llvm-compilerwriterinfo">[68]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>LLVMで公式に実装されているバックエンドに関するISAの情報が集約されている。Lanaiの言語仕様へのリンクが貴重。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>RISC-V support for LLVM projects<a href="#github_riscv-llvm">[10]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>どちゃくそに参考になる</strong>。以下の開発はこれに基づいて行う。</p>
+</li>
+<li>
+<p>LLVMにRISC-Vサポートを追加するパッチ群。バックエンドを開発するためのチュートリアルも兼ねているらしく <code>docs/</code> 及びそれと対応したpatchが参考になる。</p>
+</li>
+<li>
+<p>またこれについて、開発者が2018 LLVM Developers' Meetingで登壇したときの動画は<a href="#youtube_llvm-backend-development-by-example">[11]</a>より閲覧できる。スライドは<a href="#speakerdeck-llvm_backend_development">[30]</a>より閲覧できる。</p>
+</li>
+<li>
+<p>そのときのCoding Labは<a href="#lowrisc-devmtg18">[48]</a>より閲覧できる。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Create an LLVM Backend for the Cpu0 Architecture<a href="#cpu0">[35]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>Cpu0という独自アーキテクチャのLLVMバックエンドを作成するチュートリアル。多少古いが、内容が網羅的で参考になる。英語が怪しい。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>FPGA開発日記<a href="#fpga_develop_diary">[44]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>Cpu0の資料<a href="#cpu0">[35]</a>をもとに1からRISC-Vバックエンドを作成する過程がブログエントリとして公開されている。GitHubに実装も公開されている<a href="#fpga_develop_diary-llvm">[65]</a>。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>ELVMバックエンド<a href="#elvm-llvm_backend">[36]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>限られた命令でLLVM IRの機能を達成する例として貴重。でも意外とISAはリッチだったりする。</p>
+</li>
+<li>
+<p>作成者のスライドも参考になる<a href="#elvm-slide">[37]</a>。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>2018年度東大CPU実験で開発されたLLVM Backend<a href="#todai_llvm_backend">[40]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>これについて書かれたAdCのエントリもある<a href="#todai_llvm_backend-article">[41]</a>。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Tutorial: Building a backend in 24 hours<a href="#llvm-anton_korobeynikov_2012">[45]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>LLVMバックエンドの大まかな動きについてざっとまとめたあと、 <code>ret</code> だけが定義された最低限のLLVMバックエンド ("stub backend") を構成している。</p>
+</li>
+<li>
+<p>Instruction Selection の説明にある <strong>Does bunch of magic and crazy pattern-matching</strong> が好き。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>2017 LLVM Developers’ Meeting: M. Braun "Welcome to the back-end: The LLVM machine representation"<a href="#llvm-welcome_to_the_back_end_2017">[46]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>スライドも公開されている<a href="#welcome_to_the_back_end-slides">[135]</a>。</p>
+</li>
+<li>
+<p>命令選択が終わったあとの中間表現であるLLVM MIR
+（ <code>MachineFunction</code> や <code>MachineInstr</code> など）や、それに対する操作の解説。
+RegStateやframe index・register scavengerなどの説明が貴重。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Howto: Implementing LLVM Integrated Assembler<a href="#ean10-howto-llvmas">[47]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>LLVM上でアセンブラを書くためのチュートリアル。アセンブラ単体に焦点を絞ったものは珍しい。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Building an LLVM Backend<a href="#LLVMBackend_2015_03_26_v2">[49]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>対応するレポジトリが<a href="#github-frasercrmck_llvm_leg">[54]</a>にある。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>[LLVMdev] backend documentation<a href="#llvm_dev_ml-059799">[116]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>llvm-devメーリングリストのバックエンドのよいドキュメントは無いかというスレッド。Cpu0とTriCoreが挙げられているが、深くまで記述したものは無いという回答。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>TriCore Backend<a href="#tricore-llvm">[118]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>TriCoreというアーキテクチャ用のバックエンドを書いたという論文。スライドもある<a href="#tricore-llvm-slides">[117]</a>。ソースコードもGitHub上に上がっているが、どれが公式かわからない<sup class="footnote">[<a id="_footnoteref_1" class="footnote" href="#_footnotedef_1" title="View footnote.">1</a>]</sup>。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Life of an instruction in LLVM<a href="#life_of_an_instruction">[136]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>Cコードからassemblyまでの流れを概観。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>LLVM Backendの紹介<a href="#llvm_backend_intro">[138]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>「コンパイラ勉強会」<sup class="footnote">[<a id="_footnoteref_2" class="footnote" href="#_footnotedef_2" title="View footnote.">2</a>]</sup>での、LLVMバックエンドの大きな流れ（特に命令選択）について概観した日本語スライド。</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_書籍">書籍</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』<a href="#fox-llvm">[7]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>数少ない日本語資料。Passやバックエンドの各クラスについて説明している。<a href="#llvm-code_generator">[31]</a>と合わせて大まかな流れを掴むのに良い。</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>なおLLVMについてGoogleで検索していると"LLVM Cookbook"なる謎の書籍（の電子コピー）が
+見つかるが、内容はLLVM公式文書のパクリのようだ<a href="#amazon-llvm_cookbook-customer_review">[139]</a>。</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_バックエンド">バックエンド</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>RISC-V<a href="#riscv">[5]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>パッチ群が開発ドキュメントとともに公開されている<a href="#github_riscv-llvm">[10]</a>。以降の開発はこれをベースに行う。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Lanai<a href="#lanai-isa">[103]</a></p>
+<div class="ulist">
+<ul>
+<li>
+<p>Googleが開発した32bit RISCの謎アーキテクチャ。全く実用されていないが、バックエンドが単純に設計されておりコメントも豊富のためかなり参考になる<sup class="footnote">[<a id="_footnoteref_3" class="footnote" href="#_footnotedef_3" title="View footnote.">3</a>]</sup>。<sup class="footnote">[<a id="_footnoteref_4" class="footnote" href="#_footnotedef_4" title="View footnote.">4</a>]</sup></p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Sparc</p>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="#llvm-writing_backend">[18]</a>でも説明に使われており、コメントが豊富。</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>x86</p>
+<div class="ulist">
+<ul>
+<li>
+<p>みんな大好きx86。貴重なCISCの資料であり、かつ2オペランド方式を採用する場合に実装例を与えてくれる。あと <code>EFLAGS</code> の取り回しなども参考になるが、全体的にコードは読みにくい。ただLLVMの命名規則には従うため、他のバックエンドからある程度推論をして読むのが良い。</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_cahpv3アーキテクチャ仕様">CAHPv3アーキテクチャ仕様</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><a href="https://docs.google.com/spreadsheets/d/1Q9JPoZLVyqJEC3p_LBYiPLMTjGZgVoNlu-Jx3CFrLNQ/edit?usp=sharing" class="bare">https://docs.google.com/spreadsheets/d/1Q9JPoZLVyqJEC3p_LBYiPLMTjGZgVoNlu-Jx3CFrLNQ/edit?usp=sharing</a></p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_llvmをテストする">LLVMをテストする</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>llvm-lit</code> を使用してLLVMをテストできる。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ bin/llvm-lit test -s  # 全てのテストを実行する
+$ bin/llvm-lit -s --filter 'CAHP' test # CAHPを含むテストを実行する
+$ bin/llvm-lit -as --filter 'CAHP' test # テスト結果を詳細に表示する
+$ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示する</pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_llvmバックエンドの流れ">LLVMバックエンドの流れ</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>CAHP*</code> はオーバーライドできるメンバ関数を表す。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>LLVM IR code
+
+|
+|
+v
+
+SelectionDAG (SDNode); CAHPで扱えない型・操作を含む (not legal)。
+
+|
+|  &lt;-- CAHPTargetLowering::CAHPTargetLowering
+|  &lt;-- CAHPTargetLowering::Lower*
+v
+
+SelectionDAG (SDNode); CAHPで扱える型・操作のみを含む (legal)。
+
+|
+|  &lt;-- CAHPDAGToDAGISel, CAHPInstrInfo
+v
+
+SelectionDAG (MachineSDNode); ノードの命令は全てCAHPのもの。
+
+|
+|  &lt;-- CAHPInstrInfo; 命令スケジューリング
+v
+
+LLVM MIR (MachineInstr); スケジューリングされた命令列
+
+|  (以下の流れは TargetPassConfig::addMachinePasses に記述されている)
+|
+|  &lt;-- CAHPTargetLowering::EmitInstrWithCustomInserter;
+|          usesCustomInserter フラグが立っている ある MachineInstr の代わりに
+|          複数の MachineInstr を挿入したり MachineBasicBlock を追加したりする。
+|
+|  &lt;-- SSA上での最適化
+|
+|  &lt;-- レジスタ割り付け
+v
+
+LLVM MIR (MachineInstr); 物理レジスタのみを含む命令列（仮想レジスタを含まない）
+
+|
+|  &lt;-- CAHPInstrInfo::expandPostRAPseudo
+|
+|  &lt;-- CAHPFrameLowering::processFunctionBeforeFrameFinalized
+|
+|  &lt;-- スタックサイズの確定
+|
+|  &lt;-- CAHPFrameLowering::emitPrologue; 関数プロローグの挿入
+|  &lt;-- CAHPFrameLowering::emitEpilogue; 関数エピローグの挿入
+|  &lt;-- CAHPRegisterInfo::eliminateFrameIndex; frame indexの消去
+|
+|  &lt;-- llvm::scavengeFrameVirtualRegs;
+|          frame lowering中に必要になった仮想レジスタをscavengeする
+v
+
+LLVM MIR (MachineInstr); frame index が削除された命令列
+
+|
+|  &lt;-- CAHPPassConfig::addPreEmitPass
+|  &lt;-- CAHPPassConfig::addPreEmitPass2
+|
+|
+|  &lt;-- CAHPAsmPrinter
+|  &lt;-- PseudoInstExpansion により指定された擬似命令展開の実行
+v
+
+MC (MCInst); アセンブリと等価な中間表現</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>LLVM MIRについては<a href="#llvm-welcome_to_the_back_end_2017">[46]</a>に詳しい。
+各フェーズでの <code>MachineInstr</code> をデバッグ出力させる場合は <code>llc</code> に <code>-print-machineinstrs</code> を
+渡せば良い。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_llvmのソースコードを用意する">LLVMのソースコードを用意する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>LLVMのソースコードを取得する。今回の開発ではv9.0.0をベースとする。
+Git上でcahpブランチを作り、その上で開発する。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ git clone https://github.com/llvm/llvm-project.git
+$ cd llvm-project
+$ git switch llvmorg-9.0.0
+$ git checkout -b cahp</pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_スケルトンバックエンドを追加する">スケルトンバックエンドを追加する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>isRISCV</code> などの関数が <code>Triple.h</code> に追加されていた。ただしLanaiのものは無かった。
+無くとも問題ないと思われるので実装は省略。TODO</p>
+</div>
+<div class="paragraph">
+<p>ビルドする。RISC-Vはもはやexperimentalではない。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ cmake -G Ninja \
+    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+    -DCMAKE_BUILD_TYPE="Debug" \
+    -DBUILD_SHARED_LIBS=True \
+    -DLLVM_USE_SPLIT_DWARF=True \
+    -DLLVM_OPTIMIZED_TABLEGEN=True \
+    -DLLVM_BUILD_TESTS=True \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLLVM_USE_LINKER=lld \
+    -DLLVM_TARGETS_TO_BUILD="X86;RISCV" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="CAHP" \
+    ../llvm
+$ cmake --build .</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>CAHPバックエンドが追加された。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ bin/llc --version
+LLVM (http://llvm.org/):
+  LLVM version 9.0.0
+  DEBUG build with assertions.
+  Default target: x86_64-unknown-linux-gnu
+  Host CPU: skylake
+
+  Registered Targets:
+    cahp    - CAHP
+    riscv32 - 32-bit RISC-V
+    riscv64 - 64-bit RISC-V
+    x86     - 32-bit X86: Pentium-Pro and above
+    x86-64  - 64-bit X86: EM64T and AMD64</pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_簡易的なアセンブラを実装する">簡易的なアセンブラを実装する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。メモリ演算以外は正しくエンコードされることを確認。</p>
+</div>
+<div class="paragraph">
+<p>invalid operandのエラーメッセージを正しく出す変更をここでしておく。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_cahpinstprinter_を実装する"><code>CAHPInstPrinter</code> を実装する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。 <code>tablegen(LLVM CAHPGenAsmWriter.inc -gen-asm-writer)</code> を
+CMakeFilesに追加しなくても <code>-show-encoding</code> オプションは動いた。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_テストを書く">テストを書く</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_メモリ演算を追加する">メモリ演算を追加する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。やっぱり <code>AsmWriter</code> は必要だった。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_属性を指定する">属性を指定する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。RISC-Vのlui/addi/xori/oriに
+<code>let isReMaterializable = 1, isAsCheapAsAMove = 1</code> がついていた。
+要調査TODO.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_ディスアセンブラを実装する">ディスアセンブラを実装する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。24/16bit命令の判定がRV16Kよりも楽。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_relocationとfixupに対応する">relocationとfixupに対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>relocationは何が必要なのか良くわからない。RISC-Vなどでは
+<code>R_RISCV_32</code> を定義しているが、32bitの即値を直接読み込める命令など
+存在しないはずである。とりあえずfixupで対処し、関数呼び出しを実装する時点で
+再び考えることにする。</p>
+</div>
+<div class="paragraph">
+<p>RV16Kのときとは異なり、CAHPは16bit即値を直接読み込むことはできない。
+上位6bitと下位10bitを分けて読み込むことになるが、
+そのためには <code>%hi/%lo/%pcrel_hi/%pcrel_lo</code> の実装が必要である。
+これはRISC-Vを参考にして実装する。</p>
+</div>
+<div class="paragraph">
+<p>即値の取り扱い方でだいぶ迷ったがおおよそ理解した。基本的にはRISC-Vに従う。</p>
+</div>
+<div class="paragraph">
+<p>まず <code>lui</code> は下位ビットをclearし、addiと補完して使用するほうが良い。
+こうすることで次のように <code>lw</code> などとの連携がとれる。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>lui a0, %hi(foo)
+lw a1, %lo(foo)(a0)</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>ここで使用している <code>%hi</code> は <code>foo</code> の上位6bitという意味では<strong>ない</strong>。
+というのも <code>%lo</code> が使用されるのは符号つき即値フィールドのため
+符号拡張が行われる。そのため <code>%lo</code> の10bit目が符号bitと見なされ、
+不用意に負数になる可能性がある。そこでCAHP（と参照したRISC-V）では
+「 <code>%lo</code> の10bit目が1の場合は <code>1 &lt;&lt; 10</code> を足す」という動作を行う
+必要がある。</p>
+</div>
+<div class="paragraph">
+<p>またCAHPv3に <code>auipc</code> は必要ない。当初関数ポインタを正しく扱うためには
+<code>auipc</code> が必要だと考えていたが、実際には次のようにすればよい。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre># 関数名を指定した関数呼び出し
+jal hoge
+
+# 関数ポインタを経由した関数呼び出し
+lui a0, %hi(hoge)
+addi a0, a0, %lo(hoge)
+jalr</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>RISC-Vにおいて <code>auipc</code> を必要とするのは <code>j</code> や <code>jal</code> 命令などが32bit即値を
+とれないためである。CAHPでは <code>j</code> 及び <code>jal</code> が16bit即値を取れるため問題ない。</p>
+</div>
+<div class="paragraph">
+<p>とりあえず <code>%hi/%lo</code> を含まないfixupに対応した。
+relocation対応は後回し。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_hilo_に対応する"><code>%hi/%lo</code> に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>アセンブリ中で使用できるmodifierである <code>%hi/%lo</code> に対応する。
+例えば次のように動作する。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>lui a0, %hi(0xFFFF)      # lui a0, 0
+addi a0, a0, %lo(0xFFFF) # addi a0, a0, 0x3FF</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>値の下位10bitが負数になる場合には <code>%hi</code> は単に上位6bitを返すのではなく、
+それに <code>1 &lt;&lt; 10</code> を足した値を返すことに注意が必要である。</p>
+</div>
+<div class="paragraph">
+<p>基本的な実装の流れは次のようになる。まず <code>CAHPMCExpr</code> を定義する。
+<code>CAHPMCExpr</code> は <code>MCExpr</code> をラップすると同時に、
+この式が <code>%lo/%hi</code> などのmodifierのうち、どれがついているか（あるいはついていないか）を
+<code>VariantKind</code> 列挙体として保持する。fixupの生成はこの <code>VariantKind</code> を目印に操作を行う。</p>
+</div>
+<div class="paragraph">
+<p>次に <code>AsmParser</code> で <code>%</code> を読み込んだ場合に <code>parseOperandWithModifier</code> を呼出し、
+<code>CAHPMCExpr</code> を作成する。</p>
+</div>
+<div class="paragraph">
+<p><code>isSImm10</code> などでは <code>CAHPMCExpr</code> が即値として現れることを想定する必要がある。
+この場合、まず i) 定数式として評価できるならばビット幅を確認し ii) そうでなければ
+そもそもその式がvalidであるかどうかとmodifierについて調べ（ <code>classifySymbolRef</code> ）、
+validかつ適切なmodifierであればtrueを返す。なおここでいう「適切なmodifier」とは、
+例えば <code>isSImm10</code> に <code>%lo</code> が来ることは認められるが <code>%hi</code> は認められない、
+といったことを意味している。</p>
+</div>
+<div class="paragraph">
+<p><code>getImmOpValue</code> にてfixupを作る際にも <code>CAHPMCExpr</code> を考慮する必要がある。
+fixupでは命令そのものを書き換える必要があるため、即値がどのようにバイト中に
+配置されるかを知る必要がある。したがって同じbit幅でも格納方法が違う場合は
+異なるfixupの種類としなければならない。RISC-Vでは実際このために <code>InstFormat</code> を
+導入して対処しているが、幸いなことにCAHPではそのようなことがない。よかったね。</p>
+</div>
+<div class="paragraph">
+<p><code>AsmBackend</code> で <code>%hi/lo</code> 用のfixupに対応する。</p>
+</div>
+<div class="paragraph">
+<p>ここまでで <code>lui/addi</code> はちゃんと動くようになった。
+問題はその他の <code>ori</code> などで、例えば次のようなコードはエラーになってしまう。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>ori a0, a0, %lo(0xffff)</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>原因は <code>%lo(0xffff)</code> が <code>-1</code> となって符号なし即値でなくなってしまうためである。
+ではRISC-Vはどうしているかというと、なんと <code>ori</code> などビット演算にも符号付き即値を要求している。
+よくよく仕様を見てみるとこれらは符号付き即値を要求するのだ。これによって <code>xor a0, a0, -1</code> で
+<code>not</code> の代わりになるなどのメリットがあるらしい。なるほど。</p>
+</div>
+<div class="paragraph">
+<p>ということでISAを変更した<sup class="footnote">[<a id="_footnoteref_5" class="footnote" href="#_footnotedef_5" title="View footnote.">5</a>]</sup>。</p>
+</div>
+<div class="paragraph">
+<p><code>AsmParser</code> の <code>addExpr</code> で <code>CAHPMCExpr</code> について <code>evaluateAsConstant</code> をすることにより、
+これが定数式の場合はfixupを作ることなく <code>%lo/%hi</code> を評価できる。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_コンパイラのスケルトンを作成する">コンパイラのスケルトンを作成する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>ここでいう「スケルトン」とはおおよそ「何もせずただreturnするだけ」の
+LLVM IRをコンパイルできる程度のものである。それでも関数のコンパイルなどが
+必要になるため、変更量は多い。</p>
+</div>
+<div class="paragraph">
+<p>やるだけ。</p>
+</div>
+<div class="paragraph">
+<p>これによって次のような変換を実行できるようになる。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ cat foo.ll
+define void @foo() nounwind {
+  ret void
+}
+
+$ bin/llc -mtriple=cahp -verify-machineinstrs &lt; foo.ll
+	.text
+	.file	"&lt;stdin&gt;"
+	.globl	foo                     # -- Begin function foo
+	.p2align	1
+	.type	foo,@function
+foo:                                    # @foo
+# %bb.0:
+	jr	ra
+.Lfunc_end0:
+	.size	foo, .Lfunc_end0-foo
+                                        # -- End function
+
+	.section	".note.GNU-stack","",@progbits</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>ret</code> が <code>jr</code> に変換されていることが分かる。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_基本的な演算に対応する">基本的な演算に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>いわゆるALUで実行される演算に対応する。RV16Kまでは「スケルトン」に含めていたのだが
+やっぱり分けたほうが見通しが良いと思う。</p>
+</div>
+<div class="paragraph">
+<p>やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_定数の実体化に対応する">定数の実体化に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>materialization<a href="#llvm_dev_ml-114675">[154]</a>に対応する。16bit整数は <code>lui</code> と <code>addi</code> を組み合わせて
+読み込む必要があるため、TableGenファイルに <code>HI6</code> と <code>LO10Sext</code> という <code>SDNode</code> を
+追記する。</p>
+</div>
+<div class="paragraph">
+<p>ついでに上位6bitで表現できる数値のときは <code>lui</code> のみを使用するという
+最適化も取り込んでおく。RISC-Vではあとの方のコミット（3ff2022bb94）で
+ぬるっと実装されている。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_メモリ演算に対応する">メモリ演算に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。 <code>copyPhysReg</code> の実装で <code>kill</code> フラグを立てているが、
+<a href="#llvm-welcome_to_the_back_end_2017">[46]</a>によればこれは不要であるので削除しておく。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_relocationに対応する">relocationに対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。とりあえず <code>%hi/%lo</code> に対応するものと関数呼び出しに対応するものだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_条件分岐に対応する">条件分岐に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>CAHPはほとんどRISC-Vなので<sup class="footnote">[<a id="_footnoteref_6" class="footnote" href="#_footnotedef_6" title="View footnote.">6</a>]</sup>、本家<a href="#github_riscv-llvm_patch_17">[39]</a>と
+同様に <code>brcond</code> によるパターンマッチを行えば良い……と思いきや、そうではない。
+後々 <code>setcc</code> に対応する際、RISC-Vでは <code>setcc</code> に対応する命令があるので問題ないが、
+CAHPではRV16Kのときと同様にこれをexpandしなければならない。
+これが問題で、愚直にやると <code>setcc</code> が <code>brcond</code> とセットのときにもexpandされてしまう。
+回避方法があるのかもしれない<sup class="footnote">[<a id="_footnoteref_7" class="footnote" href="#_footnotedef_7" title="View footnote.">7</a>]</sup>が
+分からないので <code>BR_CC</code> を採用する。</p>
+</div>
+<div class="paragraph">
+<p><code>BR_CC</code> をまともに使っているバックエンドは少ない。BPFがその1つ。
+またBPFをもとに開発されたELVMもこれに従う。
+<code>CC_EQ</code> などの述語を作成し、これによってcond codeをパターンマッチする。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_関数呼び出しに対応する">関数呼び出しに対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>PseudoCALL</code> を導入せずに初めから <code>Pat</code> を使用して <code>jalr</code> に置き換える。
+そのため <code>MO_RegisterMask</code> の対応が必要。なお <code>jal</code> による関数呼び出しにしようとすると
+エラーになるので一旦放置（TODO）。</p>
+</div>
+<div class="paragraph">
+<p>オブジェクトファイルを生成しようとすると（アセンブラを通そうとすると）次のような
+エラーがでた。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>LLVM ERROR: unable to write nop sequence of 1 bytes</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>これは関数自体のアラインメントが2に設定されている（ <code>.p2align 1</code> ）に起因するようだ。
+<code>CAHPMCAsmInfo::CAHPMCAsmInfo</code> にて <code>HasFunctionAlignment = false;</code> とすることで回避したが、
+これは単に <code>.p2align</code> を表示させないだけなので正当ではない。
+<code>CAHPTargetLowering::CAHPTargetLowering</code> で次のように関数のアラインメントを設定する。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>setMinFunctionAlignment(0);
+setPrefFunctionAlignment(0);</pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_関数プロローグエピローグを実装する">関数プロローグ・エピローグを実装する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>llvm.frameaddress</code> と <code>llvm.returnaddress</code> が正常に動作するように、
+<code>ra</code> と <code>fp</code> は無条件に保存する。</p>
+</div>
+<div class="paragraph">
+<p>半分以上のテストが動作しなくなるが、とりあえず放置する。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_frame_pointer_eliminationを実装する">frame pointer eliminationを実装する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>テストを書き換えるのが面倒なので、さっさとframe pointer eliminationを実装してしまう。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_select_に対応する"><code>select</code> に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_frameindex_をlowerする"><code>FrameIndex</code> をlowerする。</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>select</code> の前にやるべきだったかも。RV16Kのときのframe indexへの対応は3箇所に分かれているので、
+その全てを統合する。</p>
+</div>
+<div class="paragraph">
+<p>途中混乱したが <code>Select</code> に <code>ISD::FrameIndex</code> が来た場合は単にaddiに還元してよい。
+ここで指定する即値は <code>0</code> である。後々具体的な即値が求まったときにビット幅に収まらない場合の処理は
+<code>eliminateFrameIndex</code> で行う。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_大きなスタックフレームに対応する">大きなスタックフレームに対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>RISC-Vの実装を参考にしつつ <code>RegState::Kill</code> を片っ端から消す<sup class="footnote">[<a id="_footnoteref_8" class="footnote" href="#_footnotedef_8" title="View footnote.">8</a>]</sup>。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_setcc_に対応する"><code>SETCC</code> に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>expandするだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_externalsymbol_に対応する"><code>ExternalSymbol</code> に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。これで <code>frame.ll</code> が動くようになった<sup class="footnote">[<a id="_footnoteref_9" class="footnote" href="#_footnotedef_9" title="View footnote.">9</a>]</sup>。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_jump_tableを無効化する">jump tableを無効化する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。ここでbrainfuckのLLVM IRコードがコンパイルできるようになった。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_lldにバックエンドを追加する">lldにバックエンドを追加する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。hi6/lo10に対応するのが面倒だったが、特別変わったところはない。
+RISC-Vのものを参考にして、アセンブリから作ったオブジェクトファイルをリンクした結果を
+確認するテストを追加した。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_16bit命令を活用する">16bit命令を活用する</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_compresspat_の調査"><code>CompressPat</code> の調査</h3>
+<div class="paragraph">
+<p>現状24bit命令で表現されているところで、変換できる部分は16bit命令を使用するようにしたい。
+これにはRISC-V LLVMバックエンドにて導入された <code>CompressPat</code> の仕組みを利用する。
+<code>CompressPat</code> を導入したコミット（c1b0e66b586b6898ee73efe445fe6af4125bf998）
+<a href="#llvm_phabricator-d42780">[155]</a>を参考にする。</p>
+</div>
+<div class="paragraph">
+<p><code>CompressPat</code> の仕組みは <code>utils/TableGen/RISCVCompressInstEmitter.cpp</code> にて実装されている。
+エントリポイントは <code>llvm::EmitCompressInst</code> で、ここから呼ばれる
+<code>RISCVCompressInstEmitter::run</code> が <code>RISCVCompressInstEmitter</code> クラスの関数を呼び出すことにより
+処理が行われる。まず <code>CompressPat</code> を親に持つ定義（ <code>def</code> ）をすべて取り出し、
+これらを <code>evaluateCompressPat</code> に渡す。
+その後ファイルヘッダの出力、 <code>compressInst</code> 関数のソースコードの出力、
+<code>uncompressInst</code> 関数のソースコードの出力と続く。</p>
+</div>
+<div class="paragraph">
+<p><code>CompressPat</code> 自体は次のように定義される。ここで <code>Input/Output</code> は入力・出力を表すDAGをとり、
+<code>Predicates</code> は <code>HasStdExtC</code> などの述語をとる。</p>
+</div>
+<div class="paragraph">
+<p><code>evaluateCompressPat</code> では i) まずパターンとして記述された内容が正しいか否かを
+判断し、正しければ ii) 変換元から変換先へのパターンを登録する。このときに対象のDAGを解析し、
+「元のどのオペランドが先のどのオペランドに対応するか」という情報
+（ <code>SourceOperandMap/DestOperandMap</code> ）を得る必要がある。
+なおそのあとに <code>PatReqFeatures</code> を構成しているが、これは <code>Predicates</code> を操作しているようだ。</p>
+</div>
+<div class="paragraph">
+<p><code>emitCompressInstEmitter</code> では <code>CompressPatterns</code> を使用して
+<code>compressInst</code> 関数及び <code>uncompressInst</code> 関数の出力を行う。
+どちらの関数が出力されるかは <code>Compress</code> 引数によってきまる。
+この関数では、現在注目している <code>MachineInstr</code> を変換すべきか否か・変換するならば何に変換するべきか
+を決める巨大な <code>switch</code> 文を作成する。
+各々の <code>case</code> は <code>if ( cond ) { code }</code> という形になっており、 <code>cond</code> の部分を <code>CondString</code> に、
+<code>code</code> の部分を <code>CodeString</code> に構築している。おおよそ <code>cond</code> の部分には
+「変換元・変換後のオペランドのパターンが現在見ている <code>MachineInstr</code> と一致しているか」を
+調べる条件式が入り、 <code>code</code> の部分には「現在見ている <code>MachineInstr</code> のオペランドを変換後の
+ものに置き換える」ためのコードが入る。</p>
+</div>
+<div class="paragraph">
+<p><code>switch</code> 文の条件式には <code>MI.getOpcode()</code> を戻り値を使っている。1つのopcodeは
+一般に複数のパターンにマッチする場合もある<sup class="footnote">[<a id="_footnoteref_10" class="footnote" href="#_footnotedef_10" title="View footnote.">10</a>]</sup>。そのようなケースは
+（C\++の <code>switch</code> が同名のラベルを複数個持てないという言語仕様により）一つにまとめる必要が
+ある。ここでは関数冒頭で <code>std::stable_sort</code> を呼び出したうえで、今見ているopcodeと
+前に処理したopcodeが同じか否かによって判断している。なお <code>std::stable_sort</code> は安定ソートを
+行うため、先に定義されたパターンがより早く試されることになる。
+その後 <code>Predicates</code> を満たしているか否かを判断するコードを出力する。</p>
+</div>
+<div class="paragraph">
+<p>それから変換元オペランドのパターンマッチに入る。まずtied operandの場合（2アドレス方式の
+命令など）は、その結び付けられたオペランド同士が等しいかどうか確認する。
+その上で、いま見ているオペランドがパターンの変換元オペランドと等しいかどうかを確認する。
+ただし実際に確認できるのはfixed immediate（ <code>OpData::Imm</code> ）とfixed register（ <code>OpData::Reg</code> ）
+の場合のみである。つまり固定されていないレジスタや即値の場合（ <code>OpData::Operand</code> ）は
+変換元オペランドに関するチェックのコードは生成されない<sup class="footnote">[<a id="_footnoteref_11" class="footnote" href="#_footnotedef_11" title="View footnote.">11</a>]</sup>。</p>
+</div>
+<div class="paragraph">
+<p>ここから変換後オペランドのパターンマッチに入る。fixed registerの場合はすでにチェックが
+終わっているため、置換のコードのみを出力する。それ以外の場合にはチェックのコードを出力する。
+なお即値チェックで使用されている <code>getMCOpPredicate</code> 関数は、
+<code>ValidateMCOperand</code> に渡すindexを返却する。このindexによってどのオペランドかを識別し、
+その型に設定された <code>MCOperandPredicate</code> の内容を出力する。</p>
+</div>
+<div class="paragraph">
+<p>各即値型の（ <code>simm12</code> など） <code>MCOperandPredicate</code> を見ると、定数値として計算できる場合は
+計算した後にビット幅を確かめている一方で、bare symbolの場合（何のmodifierも付されておらず
+単にシンボルがある場合）には無条件でチェックを通している。これは一見問題に見えるが、
+ここで入力されるアセンブリは全てcodegenによって生成され、かつopcodeによって
+区別されたものである。したがって「変換元の命令の条件を満たしている」という
+意味でwell-formedであって、例えば <code>simm12</code> にbare symbolが入力された場合に
+対応する命令は <code>JAL</code> のみで <code>ADDI</code> などではない。したがって問題にならない。
+逆に「他のシンボルを通す必要がないのか」という点は良くわからない。TODO
+<sup class="footnote">[<a id="_footnoteref_12" class="footnote" href="#_footnotedef_12" title="View footnote.">12</a>]</sup></p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_compresspat_をcahpに導入する"><code>CompressPat</code> をCAHPに導入する</h3>
+<div class="paragraph">
+<p><code>utils/TableGen/RISCVCompressInstEmitter.cpp</code> をコピーして <code>CAHPCompressInstEmitter.cpp</code> を作る。
+<code>RVInst</code> を参照するところは <code>CAHPInst</code> を参照するように変更する。
+なお <code>Predicates</code> に関する処理はCAHPには不要だが面倒なので放置する。
+また <code>TableGen.cpp</code> を変更し <code>-gen-cahp-compress-inst-emitter</code> オプションを作成する。</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPAsmWriter</code> を作成し <code>int PassSubtarget = 1</code> とする必要があった。
+RISC-Vのパッチを参考にする。</p>
+</div>
+<div class="paragraph">
+<p>RISC-Vは <code>addi x1, x1, 10</code> のようなアセンブリが入力された場合にも <code>c.addi</code> に変換する。
+つまりアセンブラも <code>compressInst</code> を呼ぶが、CAHPではこのようなことは行わない。
+そのため <code>compressInst</code> を呼ぶのは <code>AsmPrinter</code> に限られ<sup class="footnote">[<a id="_footnoteref_13" class="footnote" href="#_footnotedef_13" title="View footnote.">13</a>]</sup>、また <code>uncompressInst</code> は全く呼ぶ必要がない。</p>
+</div>
+<div class="paragraph">
+<p>なおTableGenのコードを書き換えてビルドしようとするとエラーが発生する。
+これはLLVMのコードをビルドするために使用するTableGen（ <code>NATIVE/bin/llvm-tblgen</code> ）が
+再コンパイルされないためである。これを解決するためにはフルビルドするか、
+フルビルドの際のビルドスケジュール（ <code>cmake -nv</code> で得られるログ）を参考にして
+<code>NATIVE/bin/llvm-tblgen</code> を次のように再コンパイルする必要がある。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>cd /path/to/llvm-project/build/NATIVE &amp;&amp; \
+/usr/bin/cmake --build /path/to/llvm-project/build/NATIVE --target llvm-tblgen --config Release</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>テストが大幅に壊れるので修正する。RISC-Vの場合は圧縮命令を有効化するか否かを表す
+オプションが存在する（ <code>-mattr=+c</code> ）が、CAHPの場合は常時有効化されるため、
+24bitの命令と16bit命令の両方をテストするには次のようにひと工夫必要である。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>define i16 @addi(i16 %a, i16 %b) nounwind {
+; CAHP-LABEL: addi:
+; CAHP:       # %bb.0:
+; CAHP-NEXT:    addi a0, a1, 1
+; CAHP-NEXT:    jr ra
+  %1 = add i16 %b, 1
+  ret i16 %1
+}
+define i16 @addi2(i16 %a) nounwind {
+; CAHP-LABEL: addi2:
+; CAHP:       # %bb.0:
+; CAHP-NEXT:    addi2 a0, 1
+; CAHP-NEXT:    jr ra
+  %1 = add i16 %a, 1
+  ret i16 %1
+}</pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_clangをcahpに対応させる">ClangをCAHPに対応させる</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。すでにlldがCAHPに対応しているので <code>ld.lld</code> を呼ぶようにしておく。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_分岐解析に対応する">分岐解析に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>RISC-Vのパッチを参考にしながら分岐解析に対応する。やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_インラインアセンブリに対応する">インラインアセンブリに対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>branch relaxationのテストを書くためにはインラインアセンブリに対応しておく
+必要がある。忘れていた。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_branch_relaxationに対応する">branch relaxationに対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_単体の_sextzexttrunc_に対応する">単体の <code>sext/zext/trunc</code> に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_fastccに対応する">fastccに対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>RISC-Vと同じようにcccと同様にしておく。やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_jal_を活用する"><code>jal</code> を活用する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>現状のCAHPではROMのサイズに512B以下という制限があるため、
+全ての関数呼び出しは <code>jal</code> によって解決できる。これを反映し、現在 <code>jalr</code> によって
+行っている関数呼び出しを <code>jal</code> によって行いたい。</p>
+</div>
+<div class="paragraph">
+<p><code>LowerCall</code> での <code>LowerGlobalAddress</code> と <code>LowerExternalSymbol</code> の呼び出しをやめ、
+<code>%hi/%lo</code> で包むことなく <code>TargetGlobalAddress/TagetExternalSymbol</code> に変換する。
+これで <code>LowerExternalSymbol</code> は不要になった。</p>
+</div>
+<div class="paragraph">
+<p>次いでこれに対するパターンマッチをTableGenにて記述する。
+ここで <code>tglobaladdr</code> と <code>texternalsym</code> は <code>OtherVT</code> ではなく <code>i16</code> にマッチすることに
+注意する。そのため <code>OtherVT</code> の11bit即値を表す <code>simm11_branch</code> と
+<code>i16</code> の11bit即値を表す <code>simm11</code> を分ける必要がある。 <code>js</code> は <code>simm11_branch</code> を
+とり <code>jsal</code> は <code>simm11</code> をとる。</p>
+</div>
+<div class="paragraph">
+<p>ここで気がついたが、実は <code>ExternalSymbol</code> を利用したテストは一つも存在しなかった。
+したがって上の <code>ExternalSymbol</code> に対する変更は正しいかどうか判断がつかない。
+仕方がないので、このあとに行う乗算の導入で確認することにする。</p>
+</div>
+<div class="paragraph">
+<p>以上の変更を加えて <code>-filetype=obj</code> を有効化すると <code>invalid fixup kind</code> の
+assertで落ちてしまう。直接の原因は <code>CAHPMCExpr::VK_CAHP_None</code> を持った
+<code>CAHPMCExpr</code> が <code>CAHPMCCodeEmitter::getImmOpValue</code> に渡されてしまうことである。
+デバッガを使って確認すると、この渡されてくる式の中身は <code>MCExpr::SymbolRef</code> であって、
+関数名のシンボルが入っている。すなわちこれは本来 <code>MCSymbolRefExpr</code> として中身単体で
+渡されてくるべきものであって <code>CAHPMCExpr</code> でラップしているのは余計なのだ。</p>
+</div>
+<div class="paragraph">
+<p>ではどこで余計にラップしているのか。ここで <code>CAHPMCExpr</code> を生成する箇所は二箇所あることに
+注意する必要がある。一つは <code>AsmParser</code> で、ここはアセンブリが入力として
+与えられたときに動くため、今回は関係がない。もう一つは <code>MachineInstr</code> から <code>MCInst</code> に変換する
+<code>llvm::LowerCAHPMachineInstrToMCInst</code> である。コード生成から直接オブジェクトファイルを
+生成する際にはこれが使われる。これまでの実装では、ここから呼び出される
+<code>LowerSymbolOperand</code> で、対象がどのようなシンボルであっても <code>CAHPMCExpr::create</code> を
+用いて <code>CAHPMCExpr</code> でラップしていた。これが原因である。
+RISC-Vを見習い、作成したい式が <code>CAHPMCExpr::VK_CAHP_None</code> 以外であるときのみに
+これを限定すれば解決した。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_乗算に対応する">乗算に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code><em>mulhi3/</em>musi3/</code> が適宜出力されるようにする。やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_除算剰余に対応する">除算・剰余に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code><em>udivhi3/</em>udivsi3/<em>divhi3/</em>divsi3/<em>umodhi3/</em>modhi3</code>
+が適宜出力されるようにする。やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_hlt_疑似命令を追加する"><code>hlt</code> 疑似命令を追加する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>js 0</code> のエイリアスとして <code>hlt</code> 疑似命令を追加する。やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_crt0_o_と_cahp_lds_の導入"><code>crt0.o</code> と <code>cahp.lds</code> の導入</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>スタートアップのためのオブジェクトファイル <code>crt0.o</code> と、
+リンカスクリプト <code>cahp.lds</code> を導入し、これが <code>sysroot</code> から読み込まれるように
+Clangの <code>CAHPToolChain</code> を改変する。なおこれらが <code>sysroot</code> にあるのは本来おかしいのだが、
+CAHPがベアメタル専用アーキテクチャのようになっている現状、
+これらのファイルをどこに置けばよいかは判然としない。TODO</p>
+</div>
+<div class="paragraph">
+<p><code>cahp.lds</code> と、 <code>crt0.o</code> の元になる <code>crt0.s</code> は <code>cahp-rt</code> という
+レポジトリで管理することにする。このあたりはRV16Kと変わらない。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_nmagic_の有効化"><code>--nmagic</code> の有効化</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>セクションのページサイズでのアラインメントを無効化して、
+リンク後のバイナリサイズを小さくする。RV16Kのときには <code>--omagic</code> を使用していたが、
+これは <code>.text</code> に書き込み可フラグを立てるためにセキュリティ上問題がある。
+LLVM 9.0.0にてLLDに導入された <code>--nmagic</code> を使えばこの問題は発生しない。</p>
+</div>
+<div class="paragraph">
+<p>実装はやるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_libcの有効化">libcの有効化</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>-nostdlib</code> や <code>-nodefaultlibs</code> が指定されない限りにおいて <code>-lc</code> を自動的に指定する。
+やるだけ。 <code>cahp-rt</code> と合わせて、これで掛け算や割り算を使用できるようになった。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_li_a0_foo_をエラーにする"><code>li a0, foo</code> をエラーにする</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>li</code> や <code>addi</code> などの即値オペランドには10bit符号付き即値が指定される。
+ここにシンボルが指定される場合、そのシンボルは <code>%lo(&#8230;&#8203;)</code> という形をとる
+必要がある。つまり何もmodifierが付与されていないシンボル（bare symbol）を
+受理してはいけない。例えば次のような入力をエラーとする必要がある。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>li a0, foo</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>RISC-Vでは<a href="#llvm_phabricator-d51732">[156]</a>にてこれに対応している。
+このコミットを参考にして修正する。</p>
+</div>
+<div class="paragraph">
+<p><code>AsmParser</code> の <code>isSImm10</code> にてシンボルを扱う場合には i)
+そのシンボルに <code>%lo</code> が付されている、あるいは ii) bare symbolでかつ定数式である
+ときのみ <code>true</code> を返し符号付き10bit即値として認める。
+なお、条件分岐命令のオペランドも符号付き10bit即値を受け取るが、
+こちらはbare symbolでなければならない。そこで <code>simm10_branch</code> には
+<code>isBareSImm10</code> という新しい関数を参照させ、単にbare symbolであるか否かを
+調べることにしておく。</p>
+</div>
+<div class="paragraph">
+<p><code>%hi</code> についても <code>isSImm6</code> について同様の処理を行う。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_llvm_objdump_の調査"><code>llvm-objdump</code> の調査</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>llvm-objdump -D hoge</code> として <code>.text</code> セクション以外でデコードできなくて死ぬ。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>llvm-objdump: /llvm-project/llvm/lib/Target/CAHP/Disassembler/CAHPDisassembler.cpp:73: DecodeStatus decodeUImmOperand(llvm::MCInst &amp;, uint64_t, int64_t, const void *) [N = 4]: Assertion `isUInt&lt;N&gt;(Imm) &amp;&amp; "Invalid immediate"' failed.</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>リリース版ビルドだと発生しない。謎。</p>
+</div>
+<div class="paragraph">
+<p>24bit命令の10bit即値と4bit即値、及び16bit命令の6bit即値と4bit即値を、
+同じ命令のクラスとしてTableGenにて記述していたことが原因だった。
+すなわち次のような <code>CAHPInst24I</code> クラスで10bit/4bit即値を受け取る命令の両方を
+処理していたことが原因だった。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>class CAHPInst24I&lt;bits&lt;6&gt; opcode, dag outs, dag ins, string opcodestr, string argstr&gt;
+: CAHPInst24&lt;outs, ins, opcodestr, argstr&gt; {
+  bits&lt;4&gt; rd;
+  bits&lt;4&gt; rs1;
+  bits&lt;10&gt; imm;</pre>
+</div>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>  let Inst{23-16} = imm{7-0};
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-6} = imm{9-8};
+  let Inst{5-0} = opcode;
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>このとき「まともな」ELFバイナリであれば、4bit即値を受け取る命令（ <code>lsri</code> など）の
+6-7ビット目と20-23ビット目には0が入っているため <code>imm</code> は正しく4bit即値となる。
+しかし実際にはこれらのビットはdon&#8217;t careであり、0が入っているとは限らないうえ、
+不正なバイナリであれば何が入っているかわからない。上の <code>llvm-objdump</code> を使った際には
+これらのビットが0ではなく、結果として4bitよりも大きい値が <code>imm</code> に入ってしまった。</p>
+</div>
+<div class="paragraph">
+<p>これを防ぐためには、4bit即値と10bit即値を受け取る命令のクラスを分ければ良い。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>// 24-bit I-instruction format for 10bit immediate
+class CAHPInst24I_10&lt;bits&lt;6&gt; opcode, dag outs, dag ins, string opcodestr, string argstr&gt;
+: CAHPInst24&lt;outs, ins, opcodestr, argstr&gt; {
+  bits&lt;4&gt; rd;
+  bits&lt;4&gt; rs1;
+  bits&lt;10&gt; imm;
+
+  let Inst{23-16} = imm{7-0};
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-6} = imm{9-8};
+  let Inst{5-0} = opcode;
+}
+
+// 24-bit I-instruction format for 4bit immediate
+class CAHPInst24I_4&lt;bits&lt;6&gt; opcode, dag outs, dag ins, string opcodestr, string argstr&gt;
+: CAHPInst24&lt;outs, ins, opcodestr, argstr&gt; {
+  bits&lt;4&gt; rd;
+  bits&lt;4&gt; rs1;
+  bits&lt;4&gt; imm;
+
+  let Inst{23-20} = 0;
+  let Inst{19-16} = imm{3-0};
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-6} = 0;
+  let Inst{5-0} = opcode;
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>16bit命令の <code>CAHPInst16I</code> についても同様である。</p>
+</div>
+<div class="paragraph">
+<p>せっかくなので、回帰バグを防ぐためにテストを書く。
+不正なバイト列<sup class="footnote">[<a id="_footnoteref_14" class="footnote" href="#_footnotedef_14" title="View footnote.">14</a>]</sup>に対して
+正しくunknownが出力されるかをチェックする。</p>
+</div>
+<div class="paragraph">
+<p>どこに書くのがLLVMとして正当なのかわからないが、
+とりあえずllvm-objdumpのテストとして書くことにする。x86の
+<code>disassemble-invalid-byte-sequences.test</code> を参考にする。
+<code>yaml2obj</code> を使えばすきなELFバイナリを作ることができるので便利だ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_スタックを利用した引数渡し">スタックを利用した引数渡し</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。先達はなんとやら。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_byval_の対応"><code>byval</code> の対応</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。 <code>byval</code> が絡むのは関数呼び出しの引数だけで、
+呼ばれる側や戻り値には関係がないことに注意。
+呼ばれる側はポインタが渡される場合と変わりなく、
+戻り値は <code>sret</code> として引数に組み込まれる。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_命令スケジューリングの実装">命令スケジューリングの実装</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>cahp-emerald以降はスーパースカラに対応するらしいので、
+LLVM側でもスーパスカラで効率的に動作するアセンブリを出力できるように
+調整する。具体的には命令スケジューリングの設定をする。
+残念ながらRISC-Vではこの設定は為されていないようだ<sup class="footnote">[<a id="_footnoteref_15" class="footnote" href="#_footnotedef_15" title="View footnote.">15</a>]</sup>。
+LanaiやSparc・ARMなどのバックエンドを参考にする。
+また<a href="#fox-llvm">[7]</a>にも記述がある。
+<a href="#llvm_dev_ml-098535">[158]</a>も参考になる。</p>
+</div>
+<div class="paragraph">
+<p><code>include/llvm/Target/TargetSchedule.td</code> によると、
+命令スケジューリングにはいくつかの方法があり、
+さらにこれらが有機的に構成されているようだ<a href="#llvm_devmtg-schedmachinemodel">[157]</a>。</p>
+</div>
+<div class="paragraph">
+<p><a href="#fox-llvm">[7]</a>によればinstruction itinerariesを利用する場合、
+TableGenファイルに各命令が属する命令スケジュールを記述する。
+スケジュール自体は <code>CAHPSchedule.td</code> に定義し、これを <code>CAHPInstrFormats.td</code>
+や <code>CAHPInstrInfo.td</code> で使う。</p>
+</div>
+<div class="paragraph">
+<p><code>FuncUnit</code> のインスタンスとして機能ユニットを定義し、
+<code>InstrItinClass</code> のインスタンスとして命令スケジュールを定義する。
+各命令はいずれかの <code>InstrItinClass</code> に属する。</p>
+</div>
+<div class="paragraph">
+<p>どの <code>InstrItinClass</code> がどのように共有リソース（機能ユニット）を利用するかを
+記述するために <code>ProcessorItineraries</code> のインスタンスを定義する。
+ここでは <code>InstrStage</code> を用いて、各命令がその処理を完了するまでに何サイクルかかり、
+どの機能ユニットを使用するかを記述する。</p>
+</div>
+<div class="paragraph">
+<p>ある命令がどの <code>InstrItinClass</code> に属するかは <code>Instruction</code> クラスの
+<code>Itinerary</code> 属性に <code>InstrItinClass</code> を入れておくことによって記述される。</p>
+</div>
+<div class="paragraph">
+<p>しかし上記のようなやり方は古いものとなっているようだ。（要確認; TODO
+<sup class="footnote">[<a id="_footnoteref_16" class="footnote" href="#_footnotedef_16" title="View footnote.">16</a>]</sup>）
+<a href="#llvm_devmtg-schedmachinemodel">[157]</a><a href="#llvm_devmtg-writinggreatsched">[159]</a><a href="#llvm_devmtg-larintrick">[161]</a>
+<a href="#llvm-schedinorder">[162]</a>を参考にし、 <code>SchedMachineModel</code> をベースとして実装する。
+このとき参考になるのはAArch64で、特に <code>AArch64SchedA53.td</code> である<a href="#llvm_dev_ml-098535">[158]</a>。</p>
+</div>
+<div class="paragraph">
+<p>次の4ステップで実装する<a href="#llvm_devmtg-writinggreatsched">[159]</a>。
+まずi) <code>SchedWrite</code> と <code>SchedRead</code> を用いてtargetごとにoperand categoryを定義し、ii)
+その後それらを実際の命令と結びつける。これは命令に <code>Sched</code> を継承させることで実現する。
+<code>Sched</code> の引数にはオペランドに対応するoperand categoryを順に渡す。
+例えばADDならwrite, read, readのように並ぶことになる。</p>
+</div>
+<div class="paragraph">
+<p>次にiii) sub-target毎に <code>SchedMachineModel</code> を用いてモデルを定義する<sup class="footnote">[<a id="_footnoteref_17" class="footnote" href="#_footnotedef_17" title="View footnote.">17</a>]</sup>。
+ここで「一度にどれだけの命令を発行できるか」などを決める。
+最後にiv) <code>ProcResource</code> を用いてそのsub-targetがいくつの共有リソースを持っているか決め、
+<code>WriteRes</code> を用いてそれらをoperand categoryと結びつける。同時に、その命令を実行するのに
+何サイクルかかるかを <code>Latency</code> として記述する。</p>
+</div>
+<div class="paragraph">
+<p>以上で記述した情報を用いて、LLVM core（の <code>MachineScheduler</code> ）は命令列をシミュレーションし、
+ヒューリスティックを用いてよしなに命令をスケジュールしてくれるらしい。
+ほかにも <code>ReadAdvance</code> を用いてフォワーディングを表現したりできる<sup class="footnote">[<a id="_footnoteref_18" class="footnote" href="#_footnotedef_18" title="View footnote.">18</a>]</sup>。
+詳しくは<a href="#llvm_devmtg-writinggreatsched">[159]</a>を参考のこと。</p>
+</div>
+<div class="paragraph">
+<p><code>Latency</code> の単位が良くわからない。Cortex-A53のパイプライン図<a href="#anandtech-11441">[160]</a>
+と比較すると <code>AArch64SchedA53.td</code> の記述はfull latencyを4とするなど、
+明らかに間違っているように見える。
+また <code>WriteRes</code> と <code>ReadAdvance</code> の両方でフォワーディングを考慮するのは二重でreduced
+cycleをカウントしているようにも見える。わけが分からん。</p>
+</div>
+<div class="paragraph">
+<p><code>include/llvm/MC/MCSchedule.h</code> を読む。Latencyの概念については
+<code>struct MCSchedModel</code> のコメントが（多少）参考になる。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>/// The abstract pipeline is built around the notion of an "issue point". This
+/// is merely a reference point for counting machine cycles. The physical
+/// machine will have pipeline stages that delay execution. The scheduler does
+/// not model those delays because they are irrelevant as long as they are
+/// consistent. Inaccuracies arise when instructions have different execution
+/// delays relative to each other, in addition to their intrinsic latency. Those
+/// special cases can be handled by TableGen constructs such as, ReadAdvance,
+/// which reduces latency when reading data, and ResourceCycles, which consumes
+/// a processor resource when writing data for a number of abstract
+/// cycles.</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>TableGenコードのデバッグをする際には次のようにすればよいらしい<a href="#llvm_devmtg-writinggreatsched">[159]</a>。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ llvm-tblgen --debug-only=subtarget-emitter --print-records -I=/work/llvm.org/llvm/include/...</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>これまでのプロセッサ（generic; スーパースカラなし）と
+これからのプロセッサ（emerald; スーパースカラあり）を
+区別して扱うためにsubtargetを追加する。これによってARMのように
+<code>-mcpu=generic</code> ・ <code>-mcpu=emerald</code> などとオプションとして
+指定できるようになる。</p>
+</div>
+<div class="paragraph">
+<p>コード上は <code>ProcessorModel</code> を新たに追加するだけである。
+ARMでは <code>ProcA53</code> という <code>SubtargetFeature</code> を定義しているが、
+特別いじる属性などはないためこれは作成しない。
+ただしこれだけでは <code>llc</code> のオプションとしては <code>-mcpu</code> が機能するが、
+<code>clang</code> に渡すと <code>argument unused during compilation: '-mcpu=emerald'</code>
+というエラーが出てしまう。</p>
+</div>
+<div class="paragraph">
+<p>これに対応するためには <code>clang</code> でのオプション解析を行う必要がある。
+すなわち <code>Driver/ToolChains/CommonArgs.cpp</code> の <code>tools::getCPUName</code> をいじって
+<code>Driver/ToolChains/Arch/CAHP.cpp</code> の <code>cahp::getCAHPTargetCPU</code> が呼ばれるようにする
+foonote:[ちなみにtarget featuresをいじる場合は <code>Driver/ToolChains/Clang.cpp</code> の
+<code>getTargetFeatures</code> をいじれば良いようだ。]。
+さらにClangの <code>CAHPTargetInfo</code> をいじって <code>isValidCPUName</code> などを正しく実装する。
+ARMだとClang側からLLVM coreのsupport関数を呼び出すなどして大変なことになっているが、
+その本質はLanaiのバックエンドが分かりやすい。要するに <code>StringSwitch</code> を使って、
+引数の文字列がCPUの名前として正しいかどうかを振り分けているだけである。
+この実装によって「 <code>-mcpu</code> が渡された場合にはその引数をcpu nameとして後の処理に回す」
+「渡されたcpu nameが正しいものであるかを判断し、正しければLLVM coreに渡す」という
+処理が実装でき、無事Clangでも <code>-mcpu</code> が使用できるようになる。</p>
+</div>
+<div class="paragraph">
+<p>次のようにすれば <code>generic</code> の場合と <code>emerald</code> の場合の差を見ることができる。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ ls bf.c | while read line; do \
+    diff &lt;(bin/clang -target cahp -mcpu=generic -c -S -o - -Oz $line) \
+         &lt;(bin/clang -target cahp -mcpu=emerald -c -S -o - -Oz $line); done</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>スケジューリングの詳細を知りたい場合は次のように <code>llc</code> を実行する。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ bin/llc -enable-misched -debug-only=machine-scheduler</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>なお <code>clang</code> で間接的に <code>llc</code> を実行したい場合は <code>-mllvm</code> オプションにつなげれば良い
+<a href="#llvm-schedinorder">[162]</a>。（未確認；TODO）</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>$ clang ... -mllvm -enable-misched -mllvm -enable-post-misched -mllvm -misched-postra</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>ただこれらを見ても、なにをもってLLVMがスケジューリングしているのかは
+そこまで自明ではないfooatnote:[<code>SU</code> は <code>SUnit</code> の略で、多分これはschedule unitの略で、
+つまりスケジューリングの単位なので、各々の命令のことのようだ。]。
+emeraldのエミュレーションで評価するのが一番適切である。TODO</p>
+</div>
+<div class="paragraph">
+<p><code>CAHPSubtarget</code> にて <code>enableMachineScheduler</code> をオーバーライドし
+<code>true</code> を返すようにしなければ新しいスケジューラである
+MISchedulerを使用してくれないようだ<a href="#llvm_devmtg-schedmachinemodel">[157]</a><sup class="footnote">[<a id="_footnoteref_19" class="footnote" href="#_footnotedef_19" title="View footnote.">19</a>]</sup><sup class="footnote">[<a id="_footnoteref_20" class="footnote" href="#_footnotedef_20" title="View footnote.">20</a>]</sup>。
+また同様に <code>enablePostRAScheduler</code> から <code>true</code> を返すようにしなければ、
+レジスタ割り付け後のスケジューリングは行ってくれないようだが、
+こちらは実行時エラーが出てしまった。</p>
+</div>
+<div class="paragraph">
+<p><code>ReadALU</code> のような <code>ReadSched</code> は、命令の <code>Sched</code> に指定するだけではエラーに
+なってしまう。 <code>ReadAdvance</code> などで使用しなければいけない。逆に言えば、
+特別な属性を指定する必要が無いのであれば作る必要はない。
+また複数の <code>ReadAdvance</code> を同じ <code>Read*</code> に対して定義することはできない。
+この制限により「 <code>WriteALU</code> には <code>2</code> で <code>WriteLdSt</code> には <code>1</code> 」のようなことはできないようだ。</p>
+</div>
+<div class="paragraph">
+<p>emeraldを「正しく」モデル化しようとすると <code>WriteALU/WriteLdSt</code> のlatencyはともに3、
+<code>ReadAdvance</code> で <code>WriteALU</code> は2, <code>WriteLdSt</code> は1とするのが筋のように思えるが、
+上記の理由からこれは不可能である。仕方がないので <code>WriteALU</code> のlatencyを1, <code>WriteLdSt</code> を2
+とする。</p>
+</div>
+<div class="paragraph">
+<p><code>enablePostRAScheduler</code> を <code>true</code> にしたい。 <code>enablePostRAScheduler</code> のコメントを読むと
+<code>SchedMachineModel</code> にて <code>let PostRAScheduler = 1;</code> としろと
+書いてある<sup class="footnote">[<a id="_footnoteref_21" class="footnote" href="#_footnotedef_21" title="View footnote.">21</a>]</sup>
+のでそうするが、同じエラーが出る。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>clang-9: /llvm-project/llvm/lib/CodeGen/MachineBasicBlock.cpp:1494: MachineBasicBlock::livein_iterator llvm::MachineBasicBlock::livein_begin() const: Assertion `getParent()-&gt;getProperties().hasProperty( MachineFunctionProperties::Property::TracksLiveness) &amp;&amp; "Liveness information is accurate"' failed.</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>どうやら一部のbasic blockに <code>TracksLiveness</code> というフラグが立っていないことが原因のようだ。
+このフラグについては <code>MachineFunctionProperties</code> のコメントに次のようにある。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>// TracksLiveness: True when tracking register liveness accurately.
+//  While this property is set, register liveness information in basic block
+//  live-in lists and machine instruction operands (e.g. kill flags, implicit
+//  defs) is accurate. This means it can be used to change the code in ways
+//  that affect the values in registers, for example by the register
+//  scavenger.
+//  When this property is clear, liveness is no longer reliable.</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>AVRやWebAssemblyはこれを次のように明示的に立てている場所がある。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>MF.getProperties().set(MachineFunctionProperties::Property::TracksLiveness);</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>とりあえず次のように <code>assert</code> をコメントアウトすれば動作した。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>MachineBasicBlock::livein_iterator MachineBasicBlock::livein_begin() const {
+  //assert(getParent()-&gt;getProperties().hasProperty(
+  //    MachineFunctionProperties::Property::TracksLiveness) &amp;&amp;
+  //    "Liveness information is accurate");
+  return LiveIns.begin();
+}</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>BranchFolder::OptimizeFunction</code> で <code>MRI.invalidateLiveness()</code> が呼び出されることが
+原因のようだ。これを抑制するためには <code>TargetRegisterInfo::trackLivenessAfterRegAlloc</code> を
+<code>CAHPRegisterInfo</code> でオーバーライドして <code>true</code> を返すようにすれば良い
+<sup class="footnote">[<a id="_footnoteref_22" class="footnote" href="#_footnotedef_22" title="View footnote.">22</a>]</sup>。
+これで <code>let PostRAScheduler = 1;</code> とできるようになった。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_動的なスタック領域確保に対応する">動的なスタック領域確保に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_frameaddrreturnaddr_に対応する"><code>frameaddr/returnaddr</code> に対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>やるだけ。 <code>frameaddr-returnaddr.ll</code> の <code>test_frameaddress_3_alloca</code> は
+存在価値がよく分からなかったので削った。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_emergency_spillに対応する">emergency spillに対応する</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>RV16Kのときには即値幅が小さすぎたために対応しなかったが、
+今回は <code>li</code> の即値幅が10bitあることもあり対応したほうがよさそうだ。
+RISC-Vの実装にならい、スタックサイズが符号付き9bitに収まらない（256バイト以上）ときに
+emergency spill slotをスタック上に用意し、どんなときでもレジスタを対比できるようにしておく。
+emergency spillの実装そのものは<a href="#github_riscv-llvm_patch_32">[132]</a>を参考にすればよく、
+それほど難しくない。</p>
+</div>
+<div class="paragraph">
+<p>むしろ同実装のテストケースが、その意味を理解するという点では難解である。
+CAHPの場合は次のようなテストになった。</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>%data = alloca [ 3000 x i16 ], align 2
+%ptr = getelementptr inbounds [3000 x i16], [3000 x i16]* %data, i16 0, i16 1000
+%1 = tail call { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } asm sideeffect "nop", "=r,=r,=r,=r,=r,=r,=r,=r,=r,=r,=r,=r,=r"()
+%asmresult0 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 0
+%asmresult1 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 1
+%asmresult2 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 2
+%asmresult3 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 3
+%asmresult4 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 4
+%asmresult5 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 5
+%asmresult6 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 6
+%asmresult7 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 7
+%asmresult8 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 8
+%asmresult9 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 9
+%asmresult10 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 10
+%asmresult11 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 11
+%asmresult12 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 12
+store volatile i16 %a, i16* %ptr
+tail call void asm sideeffect "nop", "r,r,r,r,r,r,r,r,r,r,r,r,r"(i16 %asmresult0, i16 %asmresult1, i16 %asmresult2, i16 %asmresult3, i16 %asmresult4, i16 %asmresult5, i16 %asmresult6, i16 %asmresult7, i16 %asmresult8, i16 %asmresult9, i16 %asmresult10, i16 %asmresult11, i16 %asmresult12)</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>まず冒頭で大きくスタック上に領域を確保することにより、
+emergency spill slotの確保を実行させると同時に、以降のレジスタのspillに
+複数命令（典型的には <code>lui</code> と <code>addi</code> ）を要するようにする。
+この領域は、以降のコードを最適化によって
+消されること無く確実に実行するためにも用いられる<sup class="footnote">[<a id="_footnoteref_23" class="footnote" href="#_footnotedef_23" title="View footnote.">23</a>]</sup>。</p>
+</div>
+<div class="paragraph">
+<p>次にインラインアセンブリを用いて <code>nop</code> を呼び出す。この <code>nop</code> は13個<sup class="footnote">[<a id="_footnoteref_24" class="footnote" href="#_footnotedef_24" title="View footnote.">24</a>]</sup>のレジスタに値を
+書き込む命令として扱う。これによって大量のレジスタを消費し、コード生成部にregister pressureを
+かけることがこのテストの本質である。すなわちこの <code>nop</code> を実行する際には大量のレジスタのspillが
+発生し<sup class="footnote">[<a id="_footnoteref_25" class="footnote" href="#_footnotedef_25" title="View footnote.">25</a>]</sup>、しかもそれらは
+一命令で行うことができない。したがってemergency spillが発生する。
+以降のコードは、この <code>nop</code> が最適化によって
+消されること無く確実に実行するためのコードであると推察される<sup class="footnote">[<a id="_footnoteref_26" class="footnote" href="#_footnotedef_26" title="View footnote.">26</a>]</sup>。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_done_line">-----DONE LINE -----</h2>
+<div class="sectionbody">
+
+</div>
+</div>
+<div class="sect1">
+<h2 id="_末尾再帰の対応">末尾再帰の対応</h2>
+<div class="sectionbody">
+
+</div>
+</div>
+<div class="sect1">
+<h2 id="_落ち穂拾い">落ち穂拾い</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_rotlrotrbswapcttzctlzctpop_に対応する"><code>ROTL/ROTR/BSWAP/CTTZ/CTLZ/CTPOP</code> に対応する</h3>
+
+</div>
+<div class="sect2">
+<h3 id="_32bitのシフトに対応する">32bitのシフトに対応する</h3>
+
+</div>
+<div class="sect2">
+<h3 id="_間接ジャンプに対応する">間接ジャンプに対応する</h3>
+
+</div>
+<div class="sect2">
+<h3 id="_blockaddress_のlowerに対応する"><code>BlockAddress</code> のlowerに対応する</h3>
+
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_可変長引数関数">可変長引数関数</h2>
+<div class="sectionbody">
+
+</div>
+</div>
+<div class="sect1">
+<h2 id="_デバッグ情報の出力">デバッグ情報の出力</h2>
+<div class="sectionbody">
+
+</div>
+</div>
+<div class="sect1">
+<h2 id="_machineblockplacement_のrollbackllvm_phabricator_d43256"><code>MachineBlockPlacement</code> のrollback<a href="#llvm_phabricator-d43256">[llvm_phabricator-d43256]</a></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>これ違うっぽい。</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_参照">参照</h2>
+<div class="sectionbody">
+<div class="ulist bibliography">
+<ul class="bibliography">
+<li>
+<p><a id="github_riscv-llvm_docs_01"></a>[1] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/docs/01-intro-and-building-llvm.mkd" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/docs/01-intro-and-building-llvm.mkd</a></p>
+</li>
+<li>
+<p><a id="llvm_getting-started"></a>[2] <a href="https://llvm.org/docs/GettingStarted.html" class="bare">https://llvm.org/docs/GettingStarted.html</a></p>
+</li>
+<li>
+<p><a id="clang_gettings-started"></a>[3] <a href="https://clang.llvm.org/get_started.html" class="bare">https://clang.llvm.org/get_started.html</a></p>
+</li>
+<li>
+<p><a id="asciidoctor_user-manual"></a>[4] <a href="https://asciidoctor.org/docs/user-manual/" class="bare">https://asciidoctor.org/docs/user-manual/</a></p>
+</li>
+<li>
+<p><a id="riscv"></a>[5] <a href="https://riscv.org/" class="bare">https://riscv.org/</a></p>
+</li>
+<li>
+<p><a id="riscv_specifications"></a>[6] <a href="https://riscv.org/specifications/" class="bare">https://riscv.org/specifications/</a></p>
+</li>
+<li>
+<p><a id="fox-llvm"></a>[7] 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』（柏木 餅子・風薬・矢上 栄一、株式会社インプレス、2013年）</p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_docs_02"></a>[8] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/docs/02-starting-the-backend.mkd" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/docs/02-starting-the-backend.mkd</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_02"></a>[9] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0002-RISCV-Recognise-riscv32-and-riscv64-in-triple-parsin.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0002-RISCV-Recognise-riscv32-and-riscv64-in-triple-parsin.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm"></a>[10] <a href="https://github.com/lowRISC/riscv-llvm" class="bare">https://github.com/lowRISC/riscv-llvm</a></p>
+</li>
+<li>
+<p><a id="youtube_llvm-backend-development-by-example"></a>[11] <a href="https://www.youtube.com/watch?v=AFaIP-dF-RA" class="bare">https://www.youtube.com/watch?v=AFaIP-dF-RA</a></p>
+</li>
+<li>
+<p><a id="msyksphinz_try-riscv64-llvm-backend"></a>[12] <a href="http://msyksphinz.hatenablog.com/entry/2019/01/02/040000_1" class="bare">http://msyksphinz.hatenablog.com/entry/2019/01/02/040000_1</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_03"></a>[13] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0003-RISCV-Add-RISC-V-ELF-defines.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0003-RISCV-Add-RISC-V-ELF-defines.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_04"></a>[14] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0004-RISCV-Add-stub-backend.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0004-RISCV-Add-stub-backend.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_06"></a>[15] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0006-RISCV-Add-bare-bones-RISC-V-MCTargetDesc.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0006-RISCV-Add-bare-bones-RISC-V-MCTargetDesc.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_10"></a>[16] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0010-RISCV-Add-support-for-disassembly.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0010-RISCV-Add-support-for-disassembly.patch</a></p>
+</li>
+<li>
+<p><a id="llvm-writing_backend-operand_mapping"></a>[17] <a href="https://llvm.org/docs/WritingAnLLVMBackend.html#instruction-operand-mapping" class="bare">https://llvm.org/docs/WritingAnLLVMBackend.html#instruction-operand-mapping</a></p>
+</li>
+<li>
+<p><a id="llvm-writing_backend"></a>[18] <a href="https://llvm.org/docs/WritingAnLLVMBackend.html" class="bare">https://llvm.org/docs/WritingAnLLVMBackend.html</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_07"></a>[19] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0007-RISCV-Add-basic-RISCVAsmParser.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0007-RISCV-Add-basic-RISCVAsmParser.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_08"></a>[20] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0008-RISCV-Add-RISCVInstPrinter-and-basic-MC-assembler-te.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0008-RISCV-Add-RISCVInstPrinter-and-basic-MC-assembler-te.patch</a></p>
+</li>
+<li>
+<p><a id="llvm-tablegen"></a>[21] <a href="https://llvm.org/docs/TableGen/index.html" class="bare">https://llvm.org/docs/TableGen/index.html</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_09"></a>[22] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0009-RISCV-Add-support-for-all-RV32I-instructions.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0009-RISCV-Add-support-for-all-RV32I-instructions.patch</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-tablegen_definition_question"></a>[23] <a href="http://lists.llvm.org/pipermail/llvm-dev/2015-December/093310.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2015-December/093310.html</a></p>
+</li>
+<li>
+<p><a id="llvm_doxygen-twine"></a>[24] <a href="https://llvm.org/doxygen/classllvm_1_1Twine.html" class="bare">https://llvm.org/doxygen/classllvm_1_1Twine.html</a></p>
+</li>
+<li>
+<p><a id="llvm-tablegen-langref"></a>[25] <a href="https://llvm.org/docs/TableGen/LangRef.html" class="bare">https://llvm.org/docs/TableGen/LangRef.html</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_docs_05"></a>[26] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/docs/05-disassembly.mkd" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/docs/05-disassembly.mkd</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_11"></a>[27] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0011-RISCV-Add-common-fixups-and-relocations.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0011-RISCV-Add-common-fixups-and-relocations.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_docs_06"></a>[28] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/docs/06-relocations-and-fixups.mkd" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/docs/06-relocations-and-fixups.mkd</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_13"></a>[29] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0013-RISCV-Initial-codegen-support-for-ALU-operations.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0013-RISCV-Initial-codegen-support-for-ALU-operations.patch</a></p>
+</li>
+<li>
+<p><a id="speakerdeck-llvm_backend_development"></a>[30] <a href="https://speakerdeck.com/asb/llvm-backend-development-by-example-risc-v" class="bare">https://speakerdeck.com/asb/llvm-backend-development-by-example-risc-v</a></p>
+</li>
+<li>
+<p><a id="llvm-code_generator"></a>[31] <a href="https://llvm.org/docs/CodeGenerator.html" class="bare">https://llvm.org/docs/CodeGenerator.html</a></p>
+</li>
+<li>
+<p><a id="llvm-code_generator-target_independent_code_gen_alg"></a>[32] <a href="https://llvm.org/docs/CodeGenerator.html#target-independent-code-generation-algorithms" class="bare">https://llvm.org/docs/CodeGenerator.html#target-independent-code-generation-algorithms</a></p>
+</li>
+<li>
+<p><a id="llvm-code_generator-selectiondag_instruction_selection"></a>[33] <a href="https://llvm.org/docs/CodeGenerator.html#selectiondag-instruction-selection-process" class="bare">https://llvm.org/docs/CodeGenerator.html#selectiondag-instruction-selection-process</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_15"></a>[34] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0015-RISCV-Codegen-support-for-memory-operations.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0015-RISCV-Codegen-support-for-memory-operations.patch</a></p>
+</li>
+<li>
+<p><a id="cpu0"></a>[35] <a href="https://jonathan2251.github.io/lbd/" class="bare">https://jonathan2251.github.io/lbd/</a></p>
+</li>
+<li>
+<p><a id="elvm-llvm_backend"></a>[36] <a href="https://github.com/shinh/llvm/tree/elvm" class="bare">https://github.com/shinh/llvm/tree/elvm</a></p>
+</li>
+<li>
+<p><a id="elvm-slide"></a>[37] <a href="http://shinh.skr.jp/slide/llel/000.html" class="bare">http://shinh.skr.jp/slide/llel/000.html</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_16"></a>[38] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0016-RISCV-Codegen-support-for-memory-operations-on-globa.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0016-RISCV-Codegen-support-for-memory-operations-on-globa.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_17"></a>[39] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0017-RISCV-Codegen-for-conditional-branches.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0017-RISCV-Codegen-for-conditional-branches.patch</a></p>
+</li>
+<li>
+<p><a id="todai_llvm_backend"></a>[40] <a href="https://github.com/cpu-experiment-2018-2/llvm/tree/master/lib/Target/ELMO" class="bare">https://github.com/cpu-experiment-2018-2/llvm/tree/master/lib/Target/ELMO</a></p>
+</li>
+<li>
+<p><a id="todai_llvm_backend-article"></a>[41] <a href="http://uenoku.hatenablog.com/entry/2018/12/25/044244" class="bare">http://uenoku.hatenablog.com/entry/2018/12/25/044244</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_18"></a>[42] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0018-RISCV-Support-for-function-calls.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0018-RISCV-Support-for-function-calls.patch</a></p>
+</li>
+<li>
+<p><a id="llvm-langref"></a>[43] <a href="http://llvm.org/docs/LangRef.html" class="bare">http://llvm.org/docs/LangRef.html</a></p>
+</li>
+<li>
+<p><a id="fpga_develop_diary"></a>[44] <a href="http://msyksphinz.hatenablog.com/" class="bare">http://msyksphinz.hatenablog.com/</a></p>
+</li>
+<li>
+<p><a id="llvm-anton_korobeynikov_2012"></a>[45] <a href="https://llvm.org/devmtg/2012-04-12/Slides/Workshops/Anton_Korobeynikov.pdf" class="bare">https://llvm.org/devmtg/2012-04-12/Slides/Workshops/Anton_Korobeynikov.pdf</a></p>
+</li>
+<li>
+<p><a id="llvm-welcome_to_the_back_end_2017"></a>[46] <a href="https://www.youtube.com/watch?v=objxlZg01D0" class="bare">https://www.youtube.com/watch?v=objxlZg01D0</a></p>
+</li>
+<li>
+<p><a id="ean10-howto-llvmas"></a>[47] <a href="https://www.embecosm.com/appnotes/ean10/ean10-howto-llvmas-1.0.html" class="bare">https://www.embecosm.com/appnotes/ean10/ean10-howto-llvmas-1.0.html</a></p>
+</li>
+<li>
+<p><a id="lowrisc-devmtg18"></a>[48] <a href="https://www.lowrisc.org/llvm/devmtg18/" class="bare">https://www.lowrisc.org/llvm/devmtg18/</a></p>
+</li>
+<li>
+<p><a id="LLVMBackend_2015_03_26_v2"></a>[49] <a href="http://www.inf.ed.ac.uk/teaching/courses/ct/other/LLVMBackend-2015-03-26_v2.pdf" class="bare">http://www.inf.ed.ac.uk/teaching/courses/ct/other/LLVMBackend-2015-03-26_v2.pdf</a></p>
+</li>
+<li>
+<p><a id="rui-compilerbook"></a>[50] <a href="https://www.sigbus.info/compilerbook" class="bare">https://www.sigbus.info/compilerbook</a></p>
+</li>
+<li>
+<p><a id="krister-writing_gcc_backend"></a>[51] <a href="https://kristerw.blogspot.com/2017/08/writing-gcc-backend_4.html" class="bare">https://kristerw.blogspot.com/2017/08/writing-gcc-backend_4.html</a></p>
+</li>
+<li>
+<p><a id="llvm-ml-129089"></a>[52] <a href="http://lists.llvm.org/pipermail/llvm-dev/2019-January/129089.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2019-January/129089.html</a></p>
+</li>
+<li>
+<p><a id="llvm-langref-datalayout"></a>[53] <a href="https://llvm.org/docs/LangRef.html#langref-datalayout" class="bare">https://llvm.org/docs/LangRef.html#langref-datalayout</a></p>
+</li>
+<li>
+<p><a id="github-frasercrmck_llvm_leg"></a>[54] <a href="https://github.com/frasercrmck/llvm-leg/tree/master/lib/Target/LEG" class="bare">https://github.com/frasercrmck/llvm-leg/tree/master/lib/Target/LEG</a></p>
+</li>
+<li>
+<p><a id="llvm_doxygen-InitMCRegisterInfo"></a>[55] <a href="https://llvm.org/doxygen/classllvm_1_1MCRegisterInfo.html#a989859615fcb74989b4f978c4d227a03" class="bare">https://llvm.org/doxygen/classllvm_1_1MCRegisterInfo.html#a989859615fcb74989b4f978c4d227a03</a></p>
+</li>
+<li>
+<p><a id="llvm-programmers_manual"></a>[56] <a href="http://llvm.org/docs/ProgrammersManual.html" class="bare">http://llvm.org/docs/ProgrammersManual.html</a></p>
+</li>
+<li>
+<p><a id="llvm-writing_backend-calling_conventions"></a>[57] <a href="https://llvm.org/docs/WritingAnLLVMBackend.html#calling-conventions" class="bare">https://llvm.org/docs/WritingAnLLVMBackend.html#calling-conventions</a></p>
+</li>
+<li>
+<p><a id="riscv-calling"></a>[58] <a href="https://riscv.org/wp-content/uploads/2015/01/riscv-calling.pdf" class="bare">https://riscv.org/wp-content/uploads/2015/01/riscv-calling.pdf</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-how_to_debug_instruction_selection"></a>[59] <a href="http://lists.llvm.org/pipermail/llvm-dev/2017-August/116501.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2017-August/116501.html</a></p>
+</li>
+<li>
+<p><a id="fpga_develop_diary-20190612040000"></a>[60] <a href="http://msyksphinz.hatenablog.com/entry/2019/06/12/040000" class="bare">http://msyksphinz.hatenablog.com/entry/2019/06/12/040000</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-br_cc_questions"></a>[61] <a href="http://lists.llvm.org/pipermail/llvm-dev/2014-August/075303.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2014-August/075303.html</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-multiple_result_instrs"></a>[62] <a href="https://groups.google.com/forum/#!topic/llvm-dev/8kPOj-_lbGk" class="bare">https://groups.google.com/forum/#!topic/llvm-dev/8kPOj-_lbGk</a></p>
+</li>
+<li>
+<p><a id="stackoverflow-frame_lowering"></a>[63] <a href="https://stackoverflow.com/questions/32872946/what-is-stack-frame-lowering-in-llvm" class="bare">https://stackoverflow.com/questions/32872946/what-is-stack-frame-lowering-in-llvm</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-selecting_frame_index"></a>[64] <a href="https://groups.google.com/d/msg/llvm-dev/QXwtqgau-jA/PwnHDF0gG_oJ" class="bare">https://groups.google.com/d/msg/llvm-dev/QXwtqgau-jA/PwnHDF0gG_oJ</a></p>
+</li>
+<li>
+<p><a id="fpga_develop_diary-llvm"></a>[65] <a href="https://github.com/msyksphinz/llvm/tree/myriscvx/impl90/lib/Target/MYRISCVX" class="bare">https://github.com/msyksphinz/llvm/tree/myriscvx/impl90/lib/Target/MYRISCVX</a></p>
+</li>
+<li>
+<p><a id="llvm-github_cd44ae"></a>[66] <a href="https://github.com/llvm/llvm-project/commit/cd44aee3da22f9a618f2e63c226bebf615fa8cf8" class="bare">https://github.com/llvm/llvm-project/commit/cd44aee3da22f9a618f2e63c226bebf615fa8cf8</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d43752"></a>[67] <a href="https://reviews.llvm.org/D43752" class="bare">https://reviews.llvm.org/D43752</a></p>
+</li>
+<li>
+<p><a id="llvm-compilerwriterinfo"></a>[68] <a href="https://llvm.org/docs/CompilerWriterInfo.html" class="bare">https://llvm.org/docs/CompilerWriterInfo.html</a></p>
+</li>
+<li>
+<p><a id="wikipedia-The_Gleaners"></a>[69] <a href="https://en.wikipedia.org/wiki/The_Gleaners" class="bare">https://en.wikipedia.org/wiki/The_Gleaners</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_20"></a>[70] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0020-RISCV-Support-and-tests-for-a-variety-of-additional-.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0020-RISCV-Support-and-tests-for-a-variety-of-additional-.patch</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d47422"></a>[71] <a href="https://reviews.llvm.org/D47422" class="bare">https://reviews.llvm.org/D47422</a></p>
+</li>
+<li>
+<p><a id="llvm-extendingllvm"></a>[72] <a href="https://llvm.org/docs/ExtendingLLVM.html" class="bare">https://llvm.org/docs/ExtendingLLVM.html</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-001264"></a>[73] <a href="http://lists.llvm.org/pipermail/llvm-dev/2004-June/001264.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2004-June/001264.html</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d42958"></a>[74] <a href="https://reviews.llvm.org/D42958" class="bare">https://reviews.llvm.org/D42958</a></p>
+</li>
+<li>
+<p><a id="compiler_rt"></a>[75] <a href="https://compiler-rt.llvm.org/" class="bare">https://compiler-rt.llvm.org/</a></p>
+</li>
+<li>
+<p><a id="github-riscv_compiler_rt"></a>[76] <a href="https://github.com/andestech/riscv-compiler-rt" class="bare">https://github.com/andestech/riscv-compiler-rt</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_27"></a>[77] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0027-RISCV-Support-stack-frames-and-offsets-up-to-32-bits.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0027-RISCV-Support-stack-frames-and-offsets-up-to-32-bits.patch</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d44885"></a>[78] <a href="https://reviews.llvm.org/D44885" class="bare">https://reviews.llvm.org/D44885</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d45859"></a>[79] <a href="https://reviews.llvm.org/D45859" class="bare">https://reviews.llvm.org/D45859</a></p>
+</li>
+<li>
+<p><a id="llvm-langref-poison_value"></a>[80] <a href="http://llvm.org/docs/LangRef.html#poisonvalues" class="bare">http://llvm.org/docs/LangRef.html#poisonvalues</a></p>
+</li>
+<li>
+<p><a id="github-emscripten-issues-34"></a>[81] <a href="https://github.com/emscripten-core/emscripten/issues/34" class="bare">https://github.com/emscripten-core/emscripten/issues/34</a></p>
+</li>
+<li>
+<p><a id="switch_lowering_in_llvm"></a>[82] <a href="http://fileadmin.cs.lth.se/cs/education/edan75/part2.pdf" class="bare">http://fileadmin.cs.lth.se/cs/education/edan75/part2.pdf</a></p>
+</li>
+<li>
+<p><a id="github-avr_llvm-issues-88"></a>[83] <a href="https://github.com/avr-llvm/llvm/issues/88" class="bare">https://github.com/avr-llvm/llvm/issues/88</a></p>
+</li>
+<li>
+<p><a id="asciidoctor-quickref"></a>[84] <a href="https://asciidoctor.org/docs/asciidoc-syntax-quick-reference/" class="bare">https://asciidoctor.org/docs/asciidoc-syntax-quick-reference/</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d56351"></a>[85] <a href="https://reviews.llvm.org/D56351" class="bare">https://reviews.llvm.org/D56351</a></p>
+</li>
+<li>
+<p><a id="hatenablog-rhysd-230119"></a>[86] <a href="https://rhysd.hatenablog.com/entry/2017/03/13/230119" class="bare">https://rhysd.hatenablog.com/entry/2017/03/13/230119</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-115805"></a>[87] <a href="http://lists.llvm.org/pipermail/llvm-dev/2017-July/115805.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2017-July/115805.html</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_29"></a>[88] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0029-RISCV-Add-support-for-llvm.-frameaddress-returnaddre.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0029-RISCV-Add-support-for-llvm.-frameaddress-returnaddre.patch</a></p>
+</li>
+<li>
+<p><a id="github-riscv_llvm-clang"></a>[89] <a href="https://github.com/lowRISC/riscv-llvm/tree/master/clang" class="bare">https://github.com/lowRISC/riscv-llvm/tree/master/clang</a></p>
+</li>
+<li>
+<p><a id="github-elvm_clang"></a>[90] <a href="https://github.com/shinh/clang/tree/elvm" class="bare">https://github.com/shinh/clang/tree/elvm</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_22"></a>[91] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0022-RISCV-Support-lowering-FrameIndex.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0022-RISCV-Support-lowering-FrameIndex.patch</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-087879"></a>[92] <a href="http://lists.llvm.org/pipermail/llvm-dev/2015-July/087879.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2015-July/087879.html</a></p>
+</li>
+<li>
+<p><a id="stackoverflow-27467293"></a>[93] <a href="https://stackoverflow.com/questions/27467293/how-to-force-clang-use-llvm-assembler-instead-of-system" class="bare">https://stackoverflow.com/questions/27467293/how-to-force-clang-use-llvm-assembler-instead-of-system</a></p>
+</li>
+<li>
+<p><a id="github-riscv_llvm-clang-03"></a>[94] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/clang/0003-RISCV-Implement-clang-driver-for-the-baremetal-RISCV.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/clang/0003-RISCV-Implement-clang-driver-for-the-baremetal-RISCV.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_25"></a>[95] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0025-RISCV-Add-custom-CC_RISCV-calling-convention-and-imp.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0025-RISCV-Add-custom-CC_RISCV-calling-convention-and-imp.patch</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-106187"></a>[96] <a href="http://lists.llvm.org/pipermail/llvm-dev/2016-October/106187.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2016-October/106187.html</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d39322"></a>[97] <a href="https://reviews.llvm.org/D39322" class="bare">https://reviews.llvm.org/D39322</a></p>
+</li>
+<li>
+<p><a id="cpu0-lld"></a>[98] <a href="http://jonathan2251.github.io/lbt/lld.html" class="bare">http://jonathan2251.github.io/lbt/lld.html</a></p>
+</li>
+<li>
+<p><a id="youtube-how_to_add_a_new_target_to_lld"></a>[99] <a href="https://www.youtube.com/watch?v=FIXaeRU31Ww" class="bare">https://www.youtube.com/watch?v=FIXaeRU31Ww</a></p>
+</li>
+<li>
+<p><a id="llvm-smith_newlldtargetpdf"></a>[100] <a href="https://llvm.org/devmtg/2016-09/slides/Smith-NewLLDTarget.pdf" class="bare">https://llvm.org/devmtg/2016-09/slides/Smith-NewLLDTarget.pdf</a></p>
+</li>
+<li>
+<p><a id="llvm-lld"></a>[101] <a href="https://lld.llvm.org/index.html" class="bare">https://lld.llvm.org/index.html</a></p>
+</li>
+<li>
+<p><a id="note-n9948f0cc3ed3"></a>[102] <a href="https://note.mu/ruiu/n/n9948f0cc3ed3" class="bare">https://note.mu/ruiu/n/n9948f0cc3ed3</a></p>
+</li>
+<li>
+<p><a id="lanai-isa"></a>[103] <a href="https://docs.google.com/document/d/1jwAc-Rbw1Mn7Dbn2oEB3-0FQNOwqNPslZa-NDy8wGRo/pub" class="bare">https://docs.google.com/document/d/1jwAc-Rbw1Mn7Dbn2oEB3-0FQNOwqNPslZa-NDy8wGRo/pub</a></p>
+</li>
+<li>
+<p><a id="github-blog_os-issues-370"></a>[104] <a href="https://github.com/phil-opp/blog_os/issues/370" class="bare">https://github.com/phil-opp/blog_os/issues/370</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d61688"></a>[105] <a href="https://reviews.llvm.org/D61688" class="bare">https://reviews.llvm.org/D61688</a></p>
+</li>
+<li>
+<p><a id="man-xtensa_linux_gnu_ld"></a>[106] <a href="https://linux.die.net/man/1/xtensa-linux-gnu-ld" class="bare">https://linux.die.net/man/1/xtensa-linux-gnu-ld</a></p>
+</li>
+<li>
+<p><a id="man-elf"></a>[107] <a href="https://linuxjm.osdn.jp/html/LDP_man-pages/man5/elf.5.html" class="bare">https://linuxjm.osdn.jp/html/LDP_man-pages/man5/elf.5.html</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d45385"></a>[108] <a href="https://reviews.llvm.org/D45385" class="bare">https://reviews.llvm.org/D45385</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d47882"></a>[109] <a href="https://reviews.llvm.org/D47882" class="bare">https://reviews.llvm.org/D47882</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-128257"></a>[110] <a href="https://lists.llvm.org/pipermail/llvm-dev/2018-December/128257.html" class="bare">https://lists.llvm.org/pipermail/llvm-dev/2018-December/128257.html</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_31"></a>[111] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0031-RISCV-Implement-support-for-the-BranchRelaxation-pas.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0031-RISCV-Implement-support-for-the-BranchRelaxation-pas.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_30"></a>[112] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0030-RISCV-Implement-branch-analysis.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0030-RISCV-Implement-branch-analysis.patch</a></p>
+</li>
+<li>
+<p><a id="stackoverflow-5789806"></a>[113] <a href="https://stackoverflow.com/questions/5789806/meaning-of-and-in-c" class="bare">https://stackoverflow.com/questions/5789806/meaning-of-and-in-c</a></p>
+</li>
+<li>
+<p><a id="compiler_study_report"></a>[114] <a href="https://proc-cpuinfo.fixstars.com/2018/11/compiler_study_report/" class="bare">https://proc-cpuinfo.fixstars.com/2018/11/compiler_study_report/</a></p>
+</li>
+<li>
+<p><a id="github-llvm-bcb36be8e3f5dced36710ba1a2e2206071ccc7ba"></a>[115] <a href="https://github.com/llvm/llvm-project/commit/bcb36be8e3f5dced36710ba1a2e2206071ccc7ba" class="bare">https://github.com/llvm/llvm-project/commit/bcb36be8e3f5dced36710ba1a2e2206071ccc7ba</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-059799"></a>[116] <a href="http://lists.llvm.org/pipermail/llvm-dev/2013-February/059799.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2013-February/059799.html</a></p>
+</li>
+<li>
+<p><a id="tricore-llvm-slides"></a>[117] <a href="https://reup.dmcs.pl/wiki/images/7/7a/Tricore-llvm-slides.pdf" class="bare">https://reup.dmcs.pl/wiki/images/7/7a/Tricore-llvm-slides.pdf</a></p>
+</li>
+<li>
+<p><a id="tricore-llvm"></a>[118] <a href="https://opus4.kobv.de/opus4-fau/files/1108/tricore_llvm.pdf" class="bare">https://opus4.kobv.de/opus4-fau/files/1108/tricore_llvm.pdf</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-111697"></a>[119] <a href="http://lists.llvm.org/pipermail/llvm-dev/2017-April/111697.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2017-April/111697.html</a></p>
+</li>
+<li>
+<p><a id="takayuki-no09"></a>[120] <a href="http://www.ertl.jp/~takayuki/readings/c/no09.html" class="bare">http://www.ertl.jp/~takayuki/readings/c/no09.html</a></p>
+</li>
+<li>
+<p><a id="hwenginner-linker"></a>[121] <a href="https://hwengineer.github.io/linker/" class="bare">https://hwengineer.github.io/linker/</a></p>
+</li>
+<li>
+<p><a id="koikikukan-000300"></a>[122] <a href="http://www.koikikukan.com/archives/2017/04/05-000300.php" class="bare">http://www.koikikukan.com/archives/2017/04/05-000300.php</a></p>
+</li>
+<li>
+<p><a id="stackoverflow-57735654_34997577"></a>[123] <a href="https://stackoverflow.com/questions/34997577/linker-script-allocation-of-bss-section#comment57735654_34997577" class="bare">https://stackoverflow.com/questions/34997577/linker-script-allocation-of-bss-section#comment57735654_34997577</a></p>
+</li>
+<li>
+<p><a id="redhat-ld_simple_example"></a>[124] <a href="https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/4/html/Using_ld_the_GNU_Linker/simple-example.html" class="bare">https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/4/html/Using_ld_the_GNU_Linker/simple-example.html</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d45395"></a>[125] <a href="https://reviews.llvm.org/D45395" class="bare">https://reviews.llvm.org/D45395</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d45395-398662"></a>[126] <a href="https://reviews.llvm.org/D45395#inline-398662" class="bare">https://reviews.llvm.org/D45395#inline-398662</a></p>
+</li>
+<li>
+<p><a id="llvm-langref-inline_asm"></a>[127] <a href="http://llvm.org/docs/LangRef.html#inline-assembler-expressions" class="bare">http://llvm.org/docs/LangRef.html#inline-assembler-expressions</a></p>
+</li>
+<li>
+<p><a id="hazymoon-gcc_inline_asm"></a>[128] <a href="http://caspar.hazymoon.jp/OpenBSD/annex/gcc_inline_asm.html" class="bare">http://caspar.hazymoon.jp/OpenBSD/annex/gcc_inline_asm.html</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_28"></a>[129] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0028-RISCV-Add-basic-support-for-inline-asm-constraints.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0028-RISCV-Add-basic-support-for-inline-asm-constraints.patch</a></p>
+</li>
+<li>
+<p><a id="llvm-langref-inline_asm-asm_template_argument_modifier"></a>[130] <a href="http://llvm.org/docs/LangRef.html#asm-template-argument-modifiers" class="bare">http://llvm.org/docs/LangRef.html#asm-template-argument-modifiers</a></p>
+</li>
+<li>
+<p><a id="github-llvm-0715d35ed5ac2312951976bee2a0d2587f98f39f"></a>[131] <a href="https://github.com/llvm/llvm-project/commit/0715d35ed5ac2312951976bee2a0d2587f98f39f" class="bare">https://github.com/llvm/llvm-project/commit/0715d35ed5ac2312951976bee2a0d2587f98f39f</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_32"></a>[132] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0032-RISCV-Reserve-an-emergency-spill-slot-for-the-regist.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0032-RISCV-Reserve-an-emergency-spill-slot-for-the-regist.patch</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_26"></a>[133] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0026-RISCV-Support-for-varargs.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0026-RISCV-Support-for-varargs.patch</a></p>
+</li>
+<li>
+<p><a id="github-fracture-wiki-how-dagisel-works"></a>[134] <a href="https://github.com/draperlaboratory/fracture/wiki/How-TableGen%27s-DAGISel-Backend-Works" class="bare">https://github.com/draperlaboratory/fracture/wiki/How-TableGen%27s-DAGISel-Backend-Works</a></p>
+</li>
+<li>
+<p><a id="welcome_to_the_back_end-slides"></a>[135] <a href="http://llvm.org/devmtg/2017-10/slides/Braun-Welcome%20to%20the%20Back%20End.pdf" class="bare">http://llvm.org/devmtg/2017-10/slides/Braun-Welcome%20to%20the%20Back%20End.pdf</a></p>
+</li>
+<li>
+<p><a id="life_of_an_instruction"></a>[136] <a href="https://eli.thegreenplace.net/2012/11/24/life-of-an-instruction-in-llvm/" class="bare">https://eli.thegreenplace.net/2012/11/24/life-of-an-instruction-in-llvm/</a></p>
+</li>
+<li>
+<p><a id="shinh-blog-010637"></a>[137] <a href="http://shinh.hatenablog.com/entry/2014/10/03/010637" class="bare">http://shinh.hatenablog.com/entry/2014/10/03/010637</a></p>
+</li>
+<li>
+<p><a id="llvm_backend_intro"></a>[138] <a href="https://www.slideshare.net/AkiraMaruoka/llvm-backend" class="bare">https://www.slideshare.net/AkiraMaruoka/llvm-backend</a></p>
+</li>
+<li>
+<p><a id="amazon-llvm_cookbook-customer_review"></a>[139] <a href="https://www.amazon.co.jp/dp/178528598X#customer_review-R28L2NAL8T9M2H" class="bare">https://www.amazon.co.jp/dp/178528598X#customer_review-R28L2NAL8T9M2H</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-117139"></a>[140] <a href="https://lists.llvm.org/pipermail/llvm-dev/2017-September/117139.html" class="bare">https://lists.llvm.org/pipermail/llvm-dev/2017-September/117139.html</a></p>
+</li>
+<li>
+<p><a id="github_riscv-llvm_patch_85"></a>[141] <a href="https://github.com/lowRISC/riscv-llvm/blob/master/0085-RISCV-Set-AllowRegisterRenaming-1.patch" class="bare">https://github.com/lowRISC/riscv-llvm/blob/master/0085-RISCV-Set-AllowRegisterRenaming-1.patch</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-135337"></a>[142] <a href="https://lists.llvm.org/pipermail/llvm-dev/2019-September/135337.html" class="bare">https://lists.llvm.org/pipermail/llvm-dev/2019-September/135337.html</a></p>
+</li>
+<li>
+<p><a id="wikipedia-weak_symbol"></a>[143] <a href="https://en.wikipedia.org/wiki/Weak_symbol" class="bare">https://en.wikipedia.org/wiki/Weak_symbol</a></p>
+</li>
+<li>
+<p><a id="wikipedia-remat"></a>[144] <a href="https://en.wikipedia.org/wiki/Rematerialization" class="bare">https://en.wikipedia.org/wiki/Rematerialization</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d46182"></a>[145] <a href="https://reviews.llvm.org/D46182" class="bare">https://reviews.llvm.org/D46182</a></p>
+</li>
+<li>
+<p><a id="nakata-compiler"></a>[146] 『コンパイラの構成と最適化（第2版）』（中田育男、朝倉書店、2009）</p>
+</li>
+<li>
+<p><a id="fpga_develop_diary-to_llvm9"></a>[147] <a href="http://msyksphinz.hatenablog.com/entry/2019/08/17/040000" class="bare">http://msyksphinz.hatenablog.com/entry/2019/08/17/040000</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d60488"></a>[148] <a href="https://reviews.llvm.org/D60488" class="bare">https://reviews.llvm.org/D60488</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-rl364191"></a>[149] <a href="https://reviews.llvm.org/rL364191" class="bare">https://reviews.llvm.org/rL364191</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d64121"></a>[150] <a href="https://reviews.llvm.org/D64121" class="bare">https://reviews.llvm.org/D64121</a></p>
+</li>
+<li>
+<p><a id="llvm-codingstandards"></a>[151] <a href="https://llvm.org/docs/CodingStandards.html" class="bare">https://llvm.org/docs/CodingStandards.html</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-134921"></a>[152] <a href="https://lists.llvm.org/pipermail/llvm-dev/2019-September/134921.html" class="bare">https://lists.llvm.org/pipermail/llvm-dev/2019-September/134921.html</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d43256"></a>[153] <a href="https://reviews.llvm.org/D43256" class="bare">https://reviews.llvm.org/D43256</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-114675"></a>[154] <a href="http://lists.llvm.org/pipermail/llvm-dev/2017-June/114675.html" class="bare">http://lists.llvm.org/pipermail/llvm-dev/2017-June/114675.html</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d42780"></a>[155] <a href="https://reviews.llvm.org/D42780" class="bare">https://reviews.llvm.org/D42780</a></p>
+</li>
+<li>
+<p><a id="llvm_phabricator-d51732"></a>[156] <a href="https://reviews.llvm.org/D51732" class="bare">https://reviews.llvm.org/D51732</a></p>
+</li>
+<li>
+<p><a id="llvm_devmtg-schedmachinemodel"></a>[157] <a href="http://llvm.org/devmtg/2014-10/Slides/Estes-MISchedulerTutorial.pdf" class="bare">http://llvm.org/devmtg/2014-10/Slides/Estes-MISchedulerTutorial.pdf</a></p>
+</li>
+<li>
+<p><a id="llvm_dev_ml-098535"></a>[158] <a href="https://lists.llvm.org/pipermail/llvm-dev/2016-April/098535.html" class="bare">https://lists.llvm.org/pipermail/llvm-dev/2016-April/098535.html</a></p>
+</li>
+<li>
+<p><a id="llvm_devmtg-writinggreatsched"></a>[159] <a href="https://www.youtube.com/watch?v=brpomKUynEA" class="bare">https://www.youtube.com/watch?v=brpomKUynEA</a></p>
+</li>
+<li>
+<p><a id="anandtech-11441"></a>[160] <a href="https://www.anandtech.com/show/11441/dynamiq-and-arms-new-cpus-cortex-a75-a55/4" class="bare">https://www.anandtech.com/show/11441/dynamiq-and-arms-new-cpus-cortex-a75-a55/4</a></p>
+</li>
+<li>
+<p><a id="llvm_devmtg-larintrick"></a>[161] <a href="https://llvm.org/devmtg/2012-11/Larin-Trick-Scheduling.pdf" class="bare">https://llvm.org/devmtg/2012-11/Larin-Trick-Scheduling.pdf</a></p>
+</li>
+<li>
+<p><a id="llvm-schedinorder"></a>[162] <a href="https://llvm.org/devmtg/2016-09/slides/Absar-SchedulingInOrder.pdf" class="bare">https://llvm.org/devmtg/2016-09/slides/Absar-SchedulingInOrder.pdf</a></p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div id="footnotes">
+<hr>
+<div class="footnote" id="_footnotedef_1">
+<a href="#_footnoteref_1">1</a>. 論文とスライドも怪しいものだが、著者が一致しているので多分正しいだろう。
+</div>
+<div class="footnote" id="_footnotedef_2">
+<a href="#_footnoteref_2">2</a>. これとは別の発表で「コンパイラ開発してない人生はFAKE」という名言が飛び出した勉強会<a href="#compiler_study_report">[114]</a>。
+</div>
+<div class="footnote" id="_footnotedef_3">
+<a href="#_footnoteref_3">3</a>. LLVMバックエンドの開発を円滑にするためのアーキテクチャなのではと思うほどに分かりやすい。
+</div>
+<div class="footnote" id="_footnotedef_4">
+<a href="#_footnoteref_4">4</a>. 後のSparcについて<a href="#llvm_dev_ml-059799">[116]</a> にて指摘されているように、商業的に成功しなかったアーキテクチャほどコードが単純で分かりやすい。
+</div>
+<div class="footnote" id="_footnotedef_5">
+<a href="#_footnoteref_5">5</a>. どんどんCAHPがRISC-Vになっていく。
+</div>
+<div class="footnote" id="_footnotedef_6">
+<a href="#_footnoteref_6">6</a>. 要出典
+</div>
+<div class="footnote" id="_footnotedef_7">
+<a href="#_footnoteref_7">7</a>. 一つは <code>custom</code> でよしなにする方法だが面倒。
+</div>
+<div class="footnote" id="_footnotedef_8">
+<a href="#_footnoteref_8">8</a>. これほんまに大丈夫なんやろな……
+</div>
+<div class="footnote" id="_footnotedef_9">
+<a href="#_footnoteref_9">9</a>. 後から見直したら、前から通るはずのテストっぽい。要確認。TODO
+</div>
+<div class="footnote" id="_footnotedef_10">
+<a href="#_footnoteref_10">10</a>. ただしもちろんオペランドの 内容によって一意に定まる必要はある（多分；TODO）。
+</div>
+<div class="footnote" id="_footnotedef_11">
+<a href="#_footnoteref_11">11</a>. これはおそらく、 すでにその段階に到達する時点で通常のパターンマッチにおけるチェックが済んでいるからであると 推察されるが未確認。TODO
+</div>
+<div class="footnote" id="_footnotedef_12">
+<a href="#_footnoteref_12">12</a>. 実際RISC-Vの <code>MCOperandPredicate</code> で使用される <code>isBareSymbolRef</code> を 全て <code>true</code> としてみたところ、圧縮命令に関するテストは全てパスしたように見えた。 一方で落ちるテストも2件あったことから、 <code>CompressPat</code> 以外でも <code>MCOperandPredicate</code> が 使用されていることが伺える。LLVMでは複数の箇所に記述されたプログラムの断片が 合わさってパターンマッチを行うため、全貌を把握することが難しいように思える。
+</div>
+<div class="footnote" id="_footnotedef_13">
+<a href="#_footnoteref_13">13</a>. ちょうど 疑似命令の展開と同じような操作である。
+</div>
+<div class="footnote" id="_footnotedef_14">
+<a href="#_footnoteref_14">14</a>. ISA上はdont' careのbitが0でないだけで不正ではないが、 LLVMバックエンドとしてはこれらを0として扱うことにする。
+</div>
+<div class="footnote" id="_footnotedef_15">
+<a href="#_footnoteref_15">15</a>. 単一の プロセッサをターゲットとしているわけではないからだろうか。
+</div>
+<div class="footnote" id="_footnotedef_16">
+<a href="#_footnoteref_16">16</a>. LLVMのスケジューリング手法は一度大きく変わっている <a href="#llvm_devmtg-schedmachinemodel">[157]</a><a href="#llvm_devmtg-writinggreatsched">[159]</a><a href="#llvm_devmtg-larintrick">[161]</a>。 <code>InstrItinClass</code> などを使用する方法が古いスケジューリング手法と新しいスケジューリング手法の どちらに入るのか良くわからない。 ただし <code>TargetSchedule.td</code> にて <code>TargetItinerary.td</code> を <code>include</code> する箇所には "Include legacy support for instruction itineraries."とコメントされているので、 古いほうである可能性が高い。
+</div>
+<div class="footnote" id="_footnotedef_17">
+<a href="#_footnoteref_17">17</a>. ここでは、 「基本的なISAが同じ（単一のtarget）で、それを実装するプロセッサ毎にスペックが異なる （sub-target）」というコンセプトが採用されている。
+</div>
+<div class="footnote" id="_footnotedef_18">
+<a href="#_footnoteref_18">18</a>. ただしこれは <code>Latency</code> で表現できることが多いように思う。要検討；TODO
+</div>
+<div class="footnote" id="_footnotedef_19">
+<a href="#_footnoteref_19">19</a>. これによって <code>llc</code> に <code>-enable-misched</code> オプションが渡る。
+</div>
+<div class="footnote" id="_footnotedef_20">
+<a href="#_footnoteref_20">20</a>. これによってテストが壊れるので 修正する。
+</div>
+<div class="footnote" id="_footnotedef_21">
+<a href="#_footnoteref_21">21</a>. <code>PostRAScheduling</code> が原文ママだがこれは <code>PostRAScheduler</code> の誤植のようだ。
+</div>
+<div class="footnote" id="_footnotedef_22">
+<a href="#_footnoteref_22">22</a>. RISC-Vではbranch relaxationに対応させる際に実装されていた<a href="#github_riscv-llvm_patch_31">[111]</a>。
+</div>
+<div class="footnote" id="_footnotedef_23">
+<a href="#_footnoteref_23">23</a>. 本当にそうかは未確認；TODO
+</div>
+<div class="footnote" id="_footnotedef_24">
+<a href="#_footnoteref_24">24</a>. この値は 実験的に求めた。この値を超えるとレジスタ割り付けを行うことができない。 この値が理論的にどこから来ているのかは未確認；TODO
+</div>
+<div class="footnote" id="_footnotedef_25">
+<a href="#_footnoteref_25">25</a>. これは生成されるアセンブリを見れば明らかである。
+</div>
+<div class="footnote" id="_footnotedef_26">
+<a href="#_footnoteref_26">26</a>. 本当にそうかは未確認 ；TODO
+</div>
+</div>
+<div id="footer">
+<div id="footer-text">
+Last updated 2020-10-01 10:18:16 UTC
+</div>
+</div>
+</body>
+</html>
