@@ -7,6 +7,16 @@
 
 [ここからmasterが読めます。](https://ushitora-anqou.github.io/write-your-llvm-backend/)
 
+## 下書き
+
+この文章は、2019年度に艮 鮟鱇が作成したLLVMバックエンドの、自分用メモがベースになっています。
+このメモをブラッシュアップしてまともな文章として公開する予定でしたが、
+その作業が遅れているため、一旦メモのまま公開します。
+
+- [RV32Kv1](https://ushitora-anqou.github.io/write-your-llvm-backend/draft-rv32kv1.html)
+- [RV16Kv2](https://ushitora-anqou.github.io/write-your-llvm-backend/draft-rv16kv2.html)
+- [CAHPv3](https://ushitora-anqou.github.io/write-your-llvm-backend/draft-cahpv3.html)
+
 ## ビルド方法
 
 Asciidoctorのmasterを持ってきて`asciidoctor main.asciidoc`とかする。

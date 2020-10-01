@@ -1,0 +1,1469 @@
+= [下書き] LLVMバックエンド開発文書 for CAHPv3
+艮鮟鱇 <ushitora@anqou.net>
+:toc: left
+
+== これはなに
+
+2019年にCAHPv3という自作ISA用のLLVMバックエンドを作ったときの自分とメンバ用のメモ。
+メモなので当然読みにくい。これをブラッシュアップしてまともな文章にする予定だったが、
+その作業が遅れているので、一旦メモのまま公開する。内容について質問したい場合は
+Twitter https://twitter.com/ushitora_anqou[@ushitora_anqou]までリプライなどを貰えれば反応するかもしれない。
+
+この文章は、前に作ったRV16Kv2及びRV32Kv1用LLVMバックエンドで得た知識を前提にして書かれている。
+RV16Kv2のメモは<<draft-rv16kv2.adoc>>を参照のこと。
+RV32Kv1のメモは<<draft-rv32kv1.adoc>>を参照のこと。
+
+ソースコードはlink:https://github.com/virtualsecureplatform/llvm-cahp[GitHub]にある。
+
+ブラッシュアップはlink:https://github.com/ushitora-anqou/write-your-llvm-backend[GitHub]にて行っている。
+
+このLLVMバックエンドの開発は、もともと2019年度未踏事業において
+link:https://github.com/virtualsecureplatform/kvsp[Virtual Secure Platform]を開発するために行われた。
+
+
+== 簡単使い方
+
+=== ビルドする
+
+とりあえずビルドする。ビルドには
+
+* `cmake`
+* `ninja`
+* `clang`
+* `clang++`
+* `make`
+* `lld`
+
+が必要。
+
+これらを入れた後 `cmake` を次のように走らせる。
+
+    $ cd /path/to/llvm-project
+    $ mkdir build
+    $ cd build
+    $ cmake -G Ninja \
+        -DLLVM_ENABLE_PROJECTS="lld;clang" \
+        -DCMAKE_BUILD_TYPE="Release" \
+        -DLLVM_BUILD_TESTS=True \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DLLVM_USE_LINKER=lld \
+        -DLLVM_TARGETS_TO_BUILD="" \
+        -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="CAHP" \
+        ../llvm
+    $ cmake --build .
+
+=== アセンブラを使う
+
+アセンブラを起動する。アセンブラは `build/bin/llvm-mc` である。
+
+....
+# オブジェクトファイルにアセンブル
+$ bin/llvm-mc -arch=cahp -filetype=obj foo.s | od -tx1z -Ax -v
+
+# コメント表示の機械語にアセンブル
+$ bin/llvm-mc -arch=cahp -show-encoding foo.s
+
+# オブジェクトファイルにアセンブルしたものを逆アセンブル
+$ bin/llvm-mc -filetype=obj -triple=cahp foo.s | bin/llvm-objdump -d -
+....
+
+=== コンパイラを起動する
+
+まずランタイムライブラリをビルドする必要がある。cahp-rtレポジトリを `git clone` し
+`CC=/path/to/bin/clang` をつけて `make` する。
+
+....
+# cahp-rt レポジトリをcloneする。
+$ git clone git@github.com:ushitora-anqou/cahp-rt.git
+
+# cahp-rt をビルドする。 CC 環境変数で、先程ビルドしたclangを指定する。
+$ cd cahp-rt
+$ CC=/path/to/bin/clang make
+....
+
+以下のようなCプログラム `foo.c` を `clang` を用いてコンパイルする。
+コンパイル時に `--sysroot` オプションを用いて、先程ビルドしたcahp-rtのディレクトリを指定する。
+なおバイナリサイズを小さくしたい場合は `-Oz` オプションを指定するなどすればよい。
+
+....
+$ cat foo.c
+int hoge;
+
+int main()
+{
+    hoge = 42;
+    return hoge;
+}
+
+$ bin/clang -target cahp foo.c -o foo.exe --sysroot=/path/to/cahp-rt
+....
+
+`llvm-readelf` を用いて `.text` その他のサイズが分かる。
+これがROMサイズ（ `0x200 = 512` ）未満であることを確認する。
+
+実行結果はRISC-Vのもの。TODO
+
+....
+$ bin/llvm-readelf -S foo.exe
+There are 7 section headers, starting at offset 0x10f0:
+
+Section Headers:
+  [Nr] Name              Type            Address  Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .text             PROGBITS        00000000 001000 00002e 00  AX  0   0  4
+  [ 2] .bss              NOBITS          00010000 00102e 000002 00  WA  0   0  2
+  [ 3] .comment          PROGBITS        00000000 00102e 000028 01  MS  0   0  1
+  [ 4] .symtab           SYMTAB          00000000 001058 000050 10      6   2  4
+  [ 5] .shstrtab         STRTAB          00000000 0010a8 00002f 00      0   0  1
+  [ 6] .strtab           STRTAB          00000000 0010d7 000018 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), l (large)
+  I (info), L (link order), G (group), T (TLS), E (exclude), x (unknown)
+  O (extra OS processing required) o (OS specific), p (processor specific)
+....
+
+`llvm-objdump` を用いて逆アセンブルを行うことができる。
+
+実行結果はRISC-Vのもの。TODO
+
+....
+$ bin/llvm-objdump -d foo.exe
+
+foo.exe:	file format ELF32-cahp
+
+Disassembly of section .text:
+0000000000000000 _start:
+       0:	00 73 06 00 	jal	6
+       4:	00 52 fe ff 	j	-2
+
+0000000000000008 main:
+       8:	c1 f2 	addi	sp, -4
+       a:	21 80 	swsp	fp, 2(sp)
+       c:	12 e0 	mov	fp, sp
+       e:	42 f2 	addi	fp, 4
+      10:	08 78 00 00 	li	a0, 0
+      14:	82 92 fc ff 	sw	a0, -4(fp)
+      18:	08 78 00 00 	li	a0, 0
+      1c:	88 b2 00 00 	lw	a0, 0(a0)
+      20:	12 a0 	lwsp	fp, 2(sp)
+      22:	41 f2 	addi	sp, 4
+      24:	00 40 	jr	ra
+....
+
+`cahp-sim` を使ってシミュレーションを行う。
+
+実行結果はRISC-Vのもの。TODO
+
+....
+$ /path/to/cahp-sim/main foo.exe 20
+ROM: 0000 0073
+ROM: 0002 0600
+ROM: 0004 0052
+ROM: 0006 FEFF
+ROM: 0008 C1F2
+ROM: 000A 2180
+ROM: 000C 12E0
+ROM: 000E 42F2
+ROM: 0010 0878
+ROM: 0012 0000
+ROM: 0014 8292
+ROM: 0016 FCFF
+ROM: 0018 0878
+ROM: 001A 0000
+ROM: 001C 88B2
+ROM: 001E 0000
+ROM: 0020 12A0
+ROM: 0022 41F2
+ROM: 0024 0040
+
+RAM: 0000 2A00
+
+Inst:JAL	PC <= 0x0002 Reg x0 <= 0x0004 PC <= 0x0008 FLAGS(SZCV) <= 0000
+Inst:ADDI	Reg x1 <= 0x01FA PC <= 0x000A FLAGS(SZCV) <= 0000
+Inst:SWSP	DataRam[0x01FC] <= 0x0000 DataRam[0x01FD] <= 0x0000 PC <= 0x000C FLAGS(SZCV) <= 0010
+Inst:MOV	Reg x2 <= 0x01FA PC <= 0x000E FLAGS(SZCV) <= 0000
+Inst:ADDI	Reg x2 <= 0x01FE PC <= 0x0010 FLAGS(SZCV) <= 0010
+Inst:LI	PC <= 0x0012 Reg x8 <= 0x0000 PC <= 0x0014 FLAGS(SZCV) <= 0100
+Inst:SW	PC <= 0x0016 DataRam[0x01FA] <= 0x0000 DataRam[0x01FB] <= 0x0000 PC <= 0x0018 FLAGS(SZCV) <= 0000
+Inst:LI	PC <= 0x001A Reg x8 <= 0x0000 PC <= 0x001C FLAGS(SZCV) <= 0100
+Inst:LW	PC <= 0x001E Reg x8 <= 0x002A PC <= 0x0020 FLAGS(SZCV) <= 0110
+Inst:LWSP	Reg x2 <= 0x0000 PC <= 0x0022 FLAGS(SZCV) <= 0010
+Inst:ADDI	Reg x1 <= 0x01FE PC <= 0x0024 FLAGS(SZCV) <= 0010
+Inst:JR	PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+x0=4	x1=510	x2=0	x3=0	x4=0	x5=0	x6=0	x7=0	x8=42	x9=0	x10=0	x11=0	x12=0	x13=0	x14=0	x15=0
+....
+
+`x8=42` とあるので、正しく実行されていることが分かる。
+
+== 概要
+
+これを読めば自作アーキテクチャ（CAHPv3）の機械語を出力するLLVMバックエンドを作成することができる。
+VSP開発のバス係数を高める意義がある。
+
+この文書はAsciiDocを用いて記述されている。
+記述方法についてはリファレンス<<asciidoctor_user-manual>><<asciidoctor-quickref>>を参照のこと。
+
+もう3回目なので差分しかかかない。
+
+== ところで
+
+一度もコンパイラを書いたことがない人は、この文書を読む前に
+『低レイヤを知りたい人のためのCコンパイラ作成入門』<<rui-compilerbook>>などで一度
+フルスクラッチからコンパイラを書くことをおすすめします。
+
+また<<krister-writing_gcc_backend>>などを参考に、
+LLVMではなくGCCにバックエンドを追加することも検討してみてはいかがでしょうか。
+意外とGCCのほうが楽かもしれませんよ？
+
+== 参考にすべき資料
+
+=== Webページ
+
+* Writing an LLVM Backend<<llvm-writing_backend>>
+** 分かりにくく読みにくい。正直あんまり見ていないが、たまに眺めると有益な情報を見つけたりもする。
+* The LLVM Target-Independent Code Generator<<llvm-code_generator>>
+** <<llvm-writing_backend>>よりもよほど参考になる。LLVMバックエンドがどのようにLLVM IRをアセンブリに落とすかが明記されている。必読。
+* TableGenのLLVMのドキュメント<<llvm-tablegen>>
+** 情報量が少ない。これを読むよりも各種バックエンドのTableGenファイルを読むほうが良い。
+* LLVM Language Reference Manual<<llvm-langref>>
+** LLVM IRについての言語リファレンス。LLVM IRの仕様などを参照できる。必要に応じて読む。
+* Architecture & Platform Information for Compiler Writers<<llvm-compilerwriterinfo>>
+** LLVMで公式に実装されているバックエンドに関するISAの情報が集約されている。Lanaiの言語仕様へのリンクが貴重。
+* RISC-V support for LLVM projects<<github_riscv-llvm>>
+** **どちゃくそに参考になる**。以下の開発はこれに基づいて行う。
+** LLVMにRISC-Vサポートを追加するパッチ群。バックエンドを開発するためのチュートリアルも兼ねているらしく `docs/` 及びそれと対応したpatchが参考になる。
+** またこれについて、開発者が2018 LLVM Developers' Meetingで登壇したときの動画は<<youtube_llvm-backend-development-by-example>>より閲覧できる。スライドは<<speakerdeck-llvm_backend_development>>より閲覧できる。
+** そのときのCoding Labは<<lowrisc-devmtg18>>より閲覧できる。
+* Create an LLVM Backend for the Cpu0 Architecture<<cpu0>>
+** Cpu0という独自アーキテクチャのLLVMバックエンドを作成するチュートリアル。多少古いが、内容が網羅的で参考になる。英語が怪しい。
+* FPGA開発日記<<fpga_develop_diary>>
+** Cpu0の資料<<cpu0>>をもとに1からRISC-Vバックエンドを作成する過程がブログエントリとして公開されている。GitHubに実装も公開されている<<fpga_develop_diary-llvm>>。
+* ELVMバックエンド<<elvm-llvm_backend>>
+** 限られた命令でLLVM IRの機能を達成する例として貴重。でも意外とISAはリッチだったりする。
+** 作成者のスライドも参考になる<<elvm-slide>>。
+* 2018年度東大CPU実験で開発されたLLVM Backend<<todai_llvm_backend>>
+** これについて書かれたAdCのエントリもある<<todai_llvm_backend-article>>。
+* Tutorial: Building a backend in 24 hours<<llvm-anton_korobeynikov_2012>>
+** LLVMバックエンドの大まかな動きについてざっとまとめたあと、 `ret` だけが定義された最低限のLLVMバックエンド ("stub backend") を構成している。
+** Instruction Selection の説明にある *Does bunch of magic and crazy pattern-matching* が好き。
+* 2017 LLVM Developers’ Meeting: M. Braun "Welcome to the back-end: The LLVM machine representation"<<llvm-welcome_to_the_back_end_2017>>
+** スライドも公開されている<<welcome_to_the_back_end-slides>>。
+** 命令選択が終わったあとの中間表現であるLLVM MIR
+（ `MachineFunction` や `MachineInstr` など）や、それに対する操作の解説。
+RegStateやframe index・register scavengerなどの説明が貴重。
+* Howto: Implementing LLVM Integrated Assembler<<ean10-howto-llvmas>>
+** LLVM上でアセンブラを書くためのチュートリアル。アセンブラ単体に焦点を絞ったものは珍しい。
+* Building an LLVM Backend<<LLVMBackend_2015_03_26_v2>>
+** 対応するレポジトリが<<github-frasercrmck_llvm_leg>>にある。
+* [LLVMdev] backend documentation<<llvm_dev_ml-059799>>
+** llvm-devメーリングリストのバックエンドのよいドキュメントは無いかというスレッド。Cpu0とTriCoreが挙げられているが、深くまで記述したものは無いという回答。
+* TriCore Backend<<tricore-llvm>>
+** TriCoreというアーキテクチャ用のバックエンドを書いたという論文。スライドもある<<tricore-llvm-slides>>。ソースコードもGitHub上に上がっているが、どれが公式かわからないfootnote:[論文とスライドも怪しいものだが、著者が一致しているので多分正しいだろう。]。
+* Life of an instruction in LLVM<<life_of_an_instruction>>
+** Cコードからassemblyまでの流れを概観。
+* LLVM Backendの紹介<<llvm_backend_intro>>
+** 「コンパイラ勉強会」footnote:[これとは別の発表で「コンパイラ開発してない人生はFAKE」という名言が飛び出した勉強会<<compiler_study_report>>。]での、LLVMバックエンドの大きな流れ（特に命令選択）について概観した日本語スライド。
+
+=== 書籍
+
+* 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』<<fox-llvm>>
+** 数少ない日本語資料。Passやバックエンドの各クラスについて説明している。<<llvm-code_generator>>と合わせて大まかな流れを掴むのに良い。
+
+なおLLVMについてGoogleで検索していると"LLVM Cookbook"なる謎の書籍（の電子コピー）が
+見つかるが、内容はLLVM公式文書のパクリのようだ<<amazon-llvm_cookbook-customer_review>>。
+
+=== バックエンド
+
+* RISC-V<<riscv>>
+** パッチ群が開発ドキュメントとともに公開されている<<github_riscv-llvm>>。以降の開発はこれをベースに行う。
+* Lanai<<lanai-isa>>
+** Googleが開発した32bit RISCの謎アーキテクチャ。全く実用されていないが、バックエンドが単純に設計されておりコメントも豊富のためかなり参考になるfootnote:[LLVMバックエンドの開発を円滑にするためのアーキテクチャなのではと思うほどに分かりやすい。]。footnote:[後のSparcについて<<llvm_dev_ml-059799>>
+にて指摘されているように、商業的に成功しなかったアーキテクチャほどコードが単純で分かりやすい。]
+* Sparc
+** <<llvm-writing_backend>>でも説明に使われており、コメントが豊富。
+* x86
+** みんな大好きx86。貴重なCISCの資料であり、かつ2オペランド方式を採用する場合に実装例を与えてくれる。あと `EFLAGS` の取り回しなども参考になるが、全体的にコードは読みにくい。ただLLVMの命名規則には従うため、他のバックエンドからある程度推論をして読むのが良い。
+
+== CAHPv3アーキテクチャ仕様
+
+https://docs.google.com/spreadsheets/d/1Q9JPoZLVyqJEC3p_LBYiPLMTjGZgVoNlu-Jx3CFrLNQ/edit?usp=sharing
+
+== LLVMをテストする
+
+`llvm-lit` を使用してLLVMをテストできる。
+
+....
+$ bin/llvm-lit test -s  # 全てのテストを実行する
+$ bin/llvm-lit -s --filter 'CAHP' test # CAHPを含むテストを実行する
+$ bin/llvm-lit -as --filter 'CAHP' test # テスト結果を詳細に表示する
+$ bin/llvm-lit -as --filter 'CAHP' --debug test # デバッグ情報を表示する
+....
+
+== LLVMバックエンドの流れ
+
+`CAHP*` はオーバーライドできるメンバ関数を表す。
+
+....
+
+LLVM IR code
+
+|
+|
+v
+
+SelectionDAG (SDNode); CAHPで扱えない型・操作を含む (not legal)。
+
+|
+|  <-- CAHPTargetLowering::CAHPTargetLowering
+|  <-- CAHPTargetLowering::Lower*
+v
+
+SelectionDAG (SDNode); CAHPで扱える型・操作のみを含む (legal)。
+
+|
+|  <-- CAHPDAGToDAGISel, CAHPInstrInfo
+v
+
+SelectionDAG (MachineSDNode); ノードの命令は全てCAHPのもの。
+
+|
+|  <-- CAHPInstrInfo; 命令スケジューリング
+v
+
+LLVM MIR (MachineInstr); スケジューリングされた命令列
+
+|  (以下の流れは TargetPassConfig::addMachinePasses に記述されている)
+|
+|  <-- CAHPTargetLowering::EmitInstrWithCustomInserter;
+|          usesCustomInserter フラグが立っている ある MachineInstr の代わりに
+|          複数の MachineInstr を挿入したり MachineBasicBlock を追加したりする。
+|
+|  <-- SSA上での最適化
+|
+|  <-- レジスタ割り付け
+v
+
+LLVM MIR (MachineInstr); 物理レジスタのみを含む命令列（仮想レジスタを含まない）
+
+|
+|  <-- CAHPInstrInfo::expandPostRAPseudo
+|
+|  <-- CAHPFrameLowering::processFunctionBeforeFrameFinalized
+|
+|  <-- スタックサイズの確定
+|
+|  <-- CAHPFrameLowering::emitPrologue; 関数プロローグの挿入
+|  <-- CAHPFrameLowering::emitEpilogue; 関数エピローグの挿入
+|  <-- CAHPRegisterInfo::eliminateFrameIndex; frame indexの消去
+|
+|  <-- llvm::scavengeFrameVirtualRegs;
+|          frame lowering中に必要になった仮想レジスタをscavengeする
+v
+
+LLVM MIR (MachineInstr); frame index が削除された命令列
+
+|
+|  <-- CAHPPassConfig::addPreEmitPass
+|  <-- CAHPPassConfig::addPreEmitPass2
+|
+|
+|  <-- CAHPAsmPrinter
+|  <-- PseudoInstExpansion により指定された擬似命令展開の実行
+v
+
+MC (MCInst); アセンブリと等価な中間表現
+....
+
+LLVM MIRについては<<llvm-welcome_to_the_back_end_2017>>に詳しい。
+各フェーズでの `MachineInstr` をデバッグ出力させる場合は `llc` に `-print-machineinstrs` を
+渡せば良い。
+
+== LLVMのソースコードを用意する
+
+LLVMのソースコードを取得する。今回の開発ではv9.0.0をベースとする。
+Git上でcahpブランチを作り、その上で開発する。
+
+....
+$ git clone https://github.com/llvm/llvm-project.git
+$ cd llvm-project
+$ git switch llvmorg-9.0.0
+$ git checkout -b cahp
+....
+
+== スケルトンバックエンドを追加する
+
+`isRISCV` などの関数が `Triple.h` に追加されていた。ただしLanaiのものは無かった。
+無くとも問題ないと思われるので実装は省略。TODO
+
+ビルドする。RISC-Vはもはやexperimentalではない。
+
+....
+$ cmake -G Ninja \
+    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+    -DCMAKE_BUILD_TYPE="Debug" \
+    -DBUILD_SHARED_LIBS=True \
+    -DLLVM_USE_SPLIT_DWARF=True \
+    -DLLVM_OPTIMIZED_TABLEGEN=True \
+    -DLLVM_BUILD_TESTS=True \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLLVM_USE_LINKER=lld \
+    -DLLVM_TARGETS_TO_BUILD="X86;RISCV" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="CAHP" \
+    ../llvm
+$ cmake --build .
+....
+
+CAHPバックエンドが追加された。
+
+....
+$ bin/llc --version
+LLVM (http://llvm.org/):
+  LLVM version 9.0.0
+  DEBUG build with assertions.
+  Default target: x86_64-unknown-linux-gnu
+  Host CPU: skylake
+
+  Registered Targets:
+    cahp    - CAHP
+    riscv32 - 32-bit RISC-V
+    riscv64 - 64-bit RISC-V
+    x86     - 32-bit X86: Pentium-Pro and above
+    x86-64  - 64-bit X86: EM64T and AMD64
+....
+
+== 簡易的なアセンブラを実装する
+
+やるだけ。メモリ演算以外は正しくエンコードされることを確認。
+
+invalid operandのエラーメッセージを正しく出す変更をここでしておく。
+
+== `CAHPInstPrinter` を実装する
+
+やるだけ。 `tablegen(LLVM CAHPGenAsmWriter.inc -gen-asm-writer)` を
+CMakeFilesに追加しなくても `-show-encoding` オプションは動いた。
+
+== テストを書く
+
+やるだけ。
+
+== メモリ演算を追加する
+
+やるだけ。やっぱり `AsmWriter` は必要だった。
+
+== 属性を指定する
+
+やるだけ。RISC-Vのlui/addi/xori/oriに
+`let isReMaterializable = 1, isAsCheapAsAMove = 1` がついていた。
+要調査TODO.
+
+== ディスアセンブラを実装する
+
+やるだけ。24/16bit命令の判定がRV16Kよりも楽。
+
+== relocationとfixupに対応する
+
+relocationは何が必要なのか良くわからない。RISC-Vなどでは
+`R_RISCV_32` を定義しているが、32bitの即値を直接読み込める命令など
+存在しないはずである。とりあえずfixupで対処し、関数呼び出しを実装する時点で
+再び考えることにする。
+
+RV16Kのときとは異なり、CAHPは16bit即値を直接読み込むことはできない。
+上位6bitと下位10bitを分けて読み込むことになるが、
+そのためには `%hi/%lo/%pcrel_hi/%pcrel_lo` の実装が必要である。
+これはRISC-Vを参考にして実装する。
+
+即値の取り扱い方でだいぶ迷ったがおおよそ理解した。基本的にはRISC-Vに従う。
+
+まず `lui` は下位ビットをclearし、addiと補完して使用するほうが良い。
+こうすることで次のように `lw` などとの連携がとれる。
+
+....
+lui a0, %hi(foo)
+lw a1, %lo(foo)(a0)
+....
+
+ここで使用している `%hi` は `foo` の上位6bitという意味では**ない**。
+というのも `%lo` が使用されるのは符号つき即値フィールドのため
+符号拡張が行われる。そのため `%lo` の10bit目が符号bitと見なされ、
+不用意に負数になる可能性がある。そこでCAHP（と参照したRISC-V）では
+「 `%lo` の10bit目が1の場合は `1 << 10` を足す」という動作を行う
+必要がある。
+
+またCAHPv3に `auipc` は必要ない。当初関数ポインタを正しく扱うためには
+`auipc` が必要だと考えていたが、実際には次のようにすればよい。
+
+....
+# 関数名を指定した関数呼び出し
+jal hoge
+
+# 関数ポインタを経由した関数呼び出し
+lui a0, %hi(hoge)
+addi a0, a0, %lo(hoge)
+jalr
+....
+
+RISC-Vにおいて `auipc` を必要とするのは `j` や `jal` 命令などが32bit即値を
+とれないためである。CAHPでは `j` 及び `jal` が16bit即値を取れるため問題ない。
+
+とりあえず `%hi/%lo` を含まないfixupに対応した。
+relocation対応は後回し。
+
+== `%hi/%lo` に対応する
+
+アセンブリ中で使用できるmodifierである `%hi/%lo` に対応する。
+例えば次のように動作する。
+
+....
+lui a0, %hi(0xFFFF)      # lui a0, 0
+addi a0, a0, %lo(0xFFFF) # addi a0, a0, 0x3FF
+....
+
+値の下位10bitが負数になる場合には `%hi` は単に上位6bitを返すのではなく、
+それに `1 << 10` を足した値を返すことに注意が必要である。
+
+基本的な実装の流れは次のようになる。まず `CAHPMCExpr` を定義する。
+`CAHPMCExpr` は `MCExpr` をラップすると同時に、
+この式が `%lo/%hi` などのmodifierのうち、どれがついているか（あるいはついていないか）を
+`VariantKind` 列挙体として保持する。fixupの生成はこの `VariantKind` を目印に操作を行う。
+
+次に `AsmParser` で `%` を読み込んだ場合に `parseOperandWithModifier` を呼出し、
+`CAHPMCExpr` を作成する。
+
+`isSImm10` などでは `CAHPMCExpr` が即値として現れることを想定する必要がある。
+この場合、まず i) 定数式として評価できるならばビット幅を確認し ii) そうでなければ
+そもそもその式がvalidであるかどうかとmodifierについて調べ（ `classifySymbolRef` ）、
+validかつ適切なmodifierであればtrueを返す。なおここでいう「適切なmodifier」とは、
+例えば `isSImm10` に `%lo` が来ることは認められるが `%hi` は認められない、
+といったことを意味している。
+
+`getImmOpValue` にてfixupを作る際にも `CAHPMCExpr` を考慮する必要がある。
+fixupでは命令そのものを書き換える必要があるため、即値がどのようにバイト中に
+配置されるかを知る必要がある。したがって同じbit幅でも格納方法が違う場合は
+異なるfixupの種類としなければならない。RISC-Vでは実際このために `InstFormat` を
+導入して対処しているが、幸いなことにCAHPではそのようなことがない。よかったね。
+
+`AsmBackend` で `%hi/lo` 用のfixupに対応する。
+
+ここまでで `lui/addi` はちゃんと動くようになった。
+問題はその他の `ori` などで、例えば次のようなコードはエラーになってしまう。
+
+	ori a0, a0, %lo(0xffff)
+
+原因は `%lo(0xffff)` が `-1` となって符号なし即値でなくなってしまうためである。
+ではRISC-Vはどうしているかというと、なんと `ori` などビット演算にも符号付き即値を要求している。
+よくよく仕様を見てみるとこれらは符号付き即値を要求するのだ。これによって `xor a0, a0, -1` で
+`not` の代わりになるなどのメリットがあるらしい。なるほど。
+
+ということでISAを変更したfootnote:[どんどんCAHPがRISC-Vになっていく。]。
+
+`AsmParser` の `addExpr` で `CAHPMCExpr` について `evaluateAsConstant` をすることにより、
+これが定数式の場合はfixupを作ることなく `%lo/%hi` を評価できる。
+
+== コンパイラのスケルトンを作成する
+
+ここでいう「スケルトン」とはおおよそ「何もせずただreturnするだけ」の
+LLVM IRをコンパイルできる程度のものである。それでも関数のコンパイルなどが
+必要になるため、変更量は多い。
+
+やるだけ。
+
+これによって次のような変換を実行できるようになる。
+
+....
+$ cat foo.ll
+define void @foo() nounwind {
+  ret void
+}
+
+$ bin/llc -mtriple=cahp -verify-machineinstrs < foo.ll
+	.text
+	.file	"<stdin>"
+	.globl	foo                     # -- Begin function foo
+	.p2align	1
+	.type	foo,@function
+foo:                                    # @foo
+# %bb.0:
+	jr	ra
+.Lfunc_end0:
+	.size	foo, .Lfunc_end0-foo
+                                        # -- End function
+
+	.section	".note.GNU-stack","",@progbits
+....
+
+`ret` が `jr` に変換されていることが分かる。
+
+== 基本的な演算に対応する
+
+いわゆるALUで実行される演算に対応する。RV16Kまでは「スケルトン」に含めていたのだが
+やっぱり分けたほうが見通しが良いと思う。
+
+やるだけ。
+
+== 定数の実体化に対応する
+
+materialization<<llvm_dev_ml-114675>>に対応する。16bit整数は `lui` と `addi` を組み合わせて
+読み込む必要があるため、TableGenファイルに `HI6` と `LO10Sext` という `SDNode` を
+追記する。
+
+ついでに上位6bitで表現できる数値のときは `lui` のみを使用するという
+最適化も取り込んでおく。RISC-Vではあとの方のコミット（3ff2022bb94）で
+ぬるっと実装されている。
+
+== メモリ演算に対応する
+
+やるだけ。 `copyPhysReg` の実装で `kill` フラグを立てているが、
+<<llvm-welcome_to_the_back_end_2017>>によればこれは不要であるので削除しておく。
+
+== relocationに対応する
+
+やるだけ。とりあえず `%hi/%lo` に対応するものと関数呼び出しに対応するものだけ。
+
+== 条件分岐に対応する
+
+CAHPはほとんどRISC-Vなのでfootnote:[要出典]、本家<<github_riscv-llvm_patch_17>>と
+同様に `brcond` によるパターンマッチを行えば良い……と思いきや、そうではない。
+後々 `setcc` に対応する際、RISC-Vでは `setcc` に対応する命令があるので問題ないが、
+CAHPではRV16Kのときと同様にこれをexpandしなければならない。
+これが問題で、愚直にやると `setcc` が `brcond` とセットのときにもexpandされてしまう。
+回避方法があるのかもしれないfootnote:[一つは `custom` でよしなにする方法だが面倒。]が
+分からないので `BR_CC` を採用する。
+
+`BR_CC` をまともに使っているバックエンドは少ない。BPFがその1つ。
+またBPFをもとに開発されたELVMもこれに従う。
+`CC_EQ` などの述語を作成し、これによってcond codeをパターンマッチする。
+
+== 関数呼び出しに対応する
+
+`PseudoCALL` を導入せずに初めから `Pat` を使用して `jalr` に置き換える。
+そのため `MO_RegisterMask` の対応が必要。なお `jal` による関数呼び出しにしようとすると
+エラーになるので一旦放置（TODO）。
+
+オブジェクトファイルを生成しようとすると（アセンブラを通そうとすると）次のような
+エラーがでた。
+
+    LLVM ERROR: unable to write nop sequence of 1 bytes
+
+これは関数自体のアラインメントが2に設定されている（ `.p2align 1` ）に起因するようだ。
+`CAHPMCAsmInfo::CAHPMCAsmInfo` にて `HasFunctionAlignment = false;` とすることで回避したが、
+これは単に `.p2align` を表示させないだけなので正当ではない。
+`CAHPTargetLowering::CAHPTargetLowering` で次のように関数のアラインメントを設定する。
+
+  setMinFunctionAlignment(0);
+  setPrefFunctionAlignment(0);
+
+== 関数プロローグ・エピローグを実装する
+
+`llvm.frameaddress` と `llvm.returnaddress` が正常に動作するように、
+`ra` と `fp` は無条件に保存する。
+
+半分以上のテストが動作しなくなるが、とりあえず放置する。
+
+== frame pointer eliminationを実装する
+
+テストを書き換えるのが面倒なので、さっさとframe pointer eliminationを実装してしまう。
+
+== `select` に対応する
+
+やるだけ。
+
+== `FrameIndex` をlowerする。
+
+`select` の前にやるべきだったかも。RV16Kのときのframe indexへの対応は3箇所に分かれているので、
+その全てを統合する。
+
+途中混乱したが `Select` に `ISD::FrameIndex` が来た場合は単にaddiに還元してよい。
+ここで指定する即値は `0` である。後々具体的な即値が求まったときにビット幅に収まらない場合の処理は
+`eliminateFrameIndex` で行う。
+
+== 大きなスタックフレームに対応する
+
+RISC-Vの実装を参考にしつつ `RegState::Kill` を片っ端から消すfootnote:[これほんまに大丈夫なんやろな……]。
+
+== `SETCC` に対応する
+
+expandするだけ。
+
+== `ExternalSymbol` に対応する
+
+やるだけ。これで `frame.ll` が動くようになったfootnote:[後から見直したら、前から通るはずのテストっぽい。要確認。TODO]。
+
+== jump tableを無効化する
+
+やるだけ。ここでbrainfuckのLLVM IRコードがコンパイルできるようになった。
+
+== lldにバックエンドを追加する
+
+やるだけ。hi6/lo10に対応するのが面倒だったが、特別変わったところはない。
+RISC-Vのものを参考にして、アセンブリから作ったオブジェクトファイルをリンクした結果を
+確認するテストを追加した。
+
+== 16bit命令を活用する
+
+=== `CompressPat` の調査
+
+現状24bit命令で表現されているところで、変換できる部分は16bit命令を使用するようにしたい。
+これにはRISC-V LLVMバックエンドにて導入された `CompressPat` の仕組みを利用する。
+`CompressPat` を導入したコミット（c1b0e66b586b6898ee73efe445fe6af4125bf998）
+<<llvm_phabricator-d42780>>を参考にする。
+
+`CompressPat` の仕組みは `utils/TableGen/RISCVCompressInstEmitter.cpp` にて実装されている。
+エントリポイントは `llvm::EmitCompressInst` で、ここから呼ばれる
+`RISCVCompressInstEmitter::run` が `RISCVCompressInstEmitter` クラスの関数を呼び出すことにより
+処理が行われる。まず `CompressPat` を親に持つ定義（ `def` ）をすべて取り出し、
+これらを `evaluateCompressPat` に渡す。
+その後ファイルヘッダの出力、 `compressInst` 関数のソースコードの出力、
+`uncompressInst` 関数のソースコードの出力と続く。
+
+`CompressPat` 自体は次のように定義される。ここで `Input/Output` は入力・出力を表すDAGをとり、
+`Predicates` は `HasStdExtC` などの述語をとる。
+
+`evaluateCompressPat` では i) まずパターンとして記述された内容が正しいか否かを
+判断し、正しければ ii) 変換元から変換先へのパターンを登録する。このときに対象のDAGを解析し、
+「元のどのオペランドが先のどのオペランドに対応するか」という情報
+（ `SourceOperandMap/DestOperandMap` ）を得る必要がある。
+なおそのあとに `PatReqFeatures` を構成しているが、これは `Predicates` を操作しているようだ。
+
+`emitCompressInstEmitter` では `CompressPatterns` を使用して
+`compressInst` 関数及び `uncompressInst` 関数の出力を行う。
+どちらの関数が出力されるかは `Compress` 引数によってきまる。
+この関数では、現在注目している `MachineInstr` を変換すべきか否か・変換するならば何に変換するべきか
+を決める巨大な `switch` 文を作成する。
+各々の `case` は `if ( cond ) { code }` という形になっており、 `cond` の部分を `CondString` に、
+`code` の部分を `CodeString` に構築している。おおよそ `cond` の部分には
+「変換元・変換後のオペランドのパターンが現在見ている `MachineInstr` と一致しているか」を
+調べる条件式が入り、 `code` の部分には「現在見ている `MachineInstr` のオペランドを変換後の
+ものに置き換える」ためのコードが入る。
+
+`switch` 文の条件式には `MI.getOpcode()` を戻り値を使っている。1つのopcodeは
+一般に複数のパターンにマッチする場合もあるfootnote:[ただしもちろんオペランドの
+内容によって一意に定まる必要はある（多分；TODO）。]。そのようなケースは
+（C\++の `switch` が同名のラベルを複数個持てないという言語仕様により）一つにまとめる必要が
+ある。ここでは関数冒頭で `std::stable_sort` を呼び出したうえで、今見ているopcodeと
+前に処理したopcodeが同じか否かによって判断している。なお `std::stable_sort` は安定ソートを
+行うため、先に定義されたパターンがより早く試されることになる。
+その後 `Predicates` を満たしているか否かを判断するコードを出力する。
+
+それから変換元オペランドのパターンマッチに入る。まずtied operandの場合（2アドレス方式の
+命令など）は、その結び付けられたオペランド同士が等しいかどうか確認する。
+その上で、いま見ているオペランドがパターンの変換元オペランドと等しいかどうかを確認する。
+ただし実際に確認できるのはfixed immediate（ `OpData::Imm` ）とfixed register（ `OpData::Reg` ）
+の場合のみである。つまり固定されていないレジスタや即値の場合（ `OpData::Operand` ）は
+変換元オペランドに関するチェックのコードは生成されないfootnote:[これはおそらく、
+すでにその段階に到達する時点で通常のパターンマッチにおけるチェックが済んでいるからであると
+推察されるが未確認。TODO]。
+
+ここから変換後オペランドのパターンマッチに入る。fixed registerの場合はすでにチェックが
+終わっているため、置換のコードのみを出力する。それ以外の場合にはチェックのコードを出力する。
+なお即値チェックで使用されている `getMCOpPredicate` 関数は、
+`ValidateMCOperand` に渡すindexを返却する。このindexによってどのオペランドかを識別し、
+その型に設定された `MCOperandPredicate` の内容を出力する。
+
+各即値型の（ `simm12` など） `MCOperandPredicate` を見ると、定数値として計算できる場合は
+計算した後にビット幅を確かめている一方で、bare symbolの場合（何のmodifierも付されておらず
+単にシンボルがある場合）には無条件でチェックを通している。これは一見問題に見えるが、
+ここで入力されるアセンブリは全てcodegenによって生成され、かつopcodeによって
+区別されたものである。したがって「変換元の命令の条件を満たしている」という
+意味でwell-formedであって、例えば `simm12` にbare symbolが入力された場合に
+対応する命令は `JAL` のみで `ADDI` などではない。したがって問題にならない。
+逆に「他のシンボルを通す必要がないのか」という点は良くわからない。TODO
+footnote:[実際RISC-Vの `MCOperandPredicate` で使用される `isBareSymbolRef` を
+全て `true` としてみたところ、圧縮命令に関するテストは全てパスしたように見えた。
+一方で落ちるテストも2件あったことから、 `CompressPat` 以外でも `MCOperandPredicate` が
+使用されていることが伺える。LLVMでは複数の箇所に記述されたプログラムの断片が
+合わさってパターンマッチを行うため、全貌を把握することが難しいように思える。]
+
+=== `CompressPat` をCAHPに導入する
+
+`utils/TableGen/RISCVCompressInstEmitter.cpp` をコピーして `CAHPCompressInstEmitter.cpp` を作る。
+`RVInst` を参照するところは `CAHPInst` を参照するように変更する。
+なお `Predicates` に関する処理はCAHPには不要だが面倒なので放置する。
+また `TableGen.cpp` を変更し `-gen-cahp-compress-inst-emitter` オプションを作成する。
+
+`CAHPAsmWriter` を作成し `int PassSubtarget = 1` とする必要があった。
+RISC-Vのパッチを参考にする。
+
+RISC-Vは `addi x1, x1, 10` のようなアセンブリが入力された場合にも `c.addi` に変換する。
+つまりアセンブラも `compressInst` を呼ぶが、CAHPではこのようなことは行わない。
+そのため `compressInst` を呼ぶのは `AsmPrinter` に限られfootnote:[ちょうど
+疑似命令の展開と同じような操作である。]、また `uncompressInst` は全く呼ぶ必要がない。
+
+なおTableGenのコードを書き換えてビルドしようとするとエラーが発生する。
+これはLLVMのコードをビルドするために使用するTableGen（ `NATIVE/bin/llvm-tblgen` ）が
+再コンパイルされないためである。これを解決するためにはフルビルドするか、
+フルビルドの際のビルドスケジュール（ `cmake -nv` で得られるログ）を参考にして
+`NATIVE/bin/llvm-tblgen` を次のように再コンパイルする必要がある。
+
+    cd /path/to/llvm-project/build/NATIVE && \
+    /usr/bin/cmake --build /path/to/llvm-project/build/NATIVE --target llvm-tblgen --config Release
+
+テストが大幅に壊れるので修正する。RISC-Vの場合は圧縮命令を有効化するか否かを表す
+オプションが存在する（ `-mattr=+c` ）が、CAHPの場合は常時有効化されるため、
+24bitの命令と16bit命令の両方をテストするには次のようにひと工夫必要である。
+
+    define i16 @addi(i16 %a, i16 %b) nounwind {
+    ; CAHP-LABEL: addi:
+    ; CAHP:       # %bb.0:
+    ; CAHP-NEXT:    addi a0, a1, 1
+    ; CAHP-NEXT:    jr ra
+      %1 = add i16 %b, 1
+      ret i16 %1
+    }
+    define i16 @addi2(i16 %a) nounwind {
+    ; CAHP-LABEL: addi2:
+    ; CAHP:       # %bb.0:
+    ; CAHP-NEXT:    addi2 a0, 1
+    ; CAHP-NEXT:    jr ra
+      %1 = add i16 %a, 1
+      ret i16 %1
+    }
+
+== ClangをCAHPに対応させる
+
+やるだけ。すでにlldがCAHPに対応しているので `ld.lld` を呼ぶようにしておく。
+
+== 分岐解析に対応する
+
+RISC-Vのパッチを参考にしながら分岐解析に対応する。やるだけ。
+
+== インラインアセンブリに対応する
+
+branch relaxationのテストを書くためにはインラインアセンブリに対応しておく
+必要がある。忘れていた。
+
+== branch relaxationに対応する
+
+やるだけ。
+
+== 単体の `sext/zext/trunc` に対応する
+
+やるだけ。
+
+== fastccに対応する
+
+RISC-Vと同じようにcccと同様にしておく。やるだけ。
+
+== `jal` を活用する
+
+現状のCAHPではROMのサイズに512B以下という制限があるため、
+全ての関数呼び出しは `jal` によって解決できる。これを反映し、現在 `jalr` によって
+行っている関数呼び出しを `jal` によって行いたい。
+
+`LowerCall` での `LowerGlobalAddress` と `LowerExternalSymbol` の呼び出しをやめ、
+`%hi/%lo` で包むことなく `TargetGlobalAddress/TagetExternalSymbol` に変換する。
+これで `LowerExternalSymbol` は不要になった。
+
+次いでこれに対するパターンマッチをTableGenにて記述する。
+ここで `tglobaladdr` と `texternalsym` は `OtherVT` ではなく `i16` にマッチすることに
+注意する。そのため `OtherVT` の11bit即値を表す `simm11_branch` と
+`i16` の11bit即値を表す `simm11` を分ける必要がある。 `js` は `simm11_branch` を
+とり `jsal` は `simm11` をとる。
+
+ここで気がついたが、実は `ExternalSymbol` を利用したテストは一つも存在しなかった。
+したがって上の `ExternalSymbol` に対する変更は正しいかどうか判断がつかない。
+仕方がないので、このあとに行う乗算の導入で確認することにする。
+
+以上の変更を加えて `-filetype=obj` を有効化すると `invalid fixup kind` の
+assertで落ちてしまう。直接の原因は `CAHPMCExpr::VK_CAHP_None` を持った
+`CAHPMCExpr` が `CAHPMCCodeEmitter::getImmOpValue` に渡されてしまうことである。
+デバッガを使って確認すると、この渡されてくる式の中身は `MCExpr::SymbolRef` であって、
+関数名のシンボルが入っている。すなわちこれは本来 `MCSymbolRefExpr` として中身単体で
+渡されてくるべきものであって `CAHPMCExpr` でラップしているのは余計なのだ。
+
+ではどこで余計にラップしているのか。ここで `CAHPMCExpr` を生成する箇所は二箇所あることに
+注意する必要がある。一つは `AsmParser` で、ここはアセンブリが入力として
+与えられたときに動くため、今回は関係がない。もう一つは `MachineInstr` から `MCInst` に変換する
+`llvm::LowerCAHPMachineInstrToMCInst` である。コード生成から直接オブジェクトファイルを
+生成する際にはこれが使われる。これまでの実装では、ここから呼び出される
+`LowerSymbolOperand` で、対象がどのようなシンボルであっても `CAHPMCExpr::create` を
+用いて `CAHPMCExpr` でラップしていた。これが原因である。
+RISC-Vを見習い、作成したい式が `CAHPMCExpr::VK_CAHP_None` 以外であるときのみに
+これを限定すれば解決した。
+
+== 乗算に対応する
+
+`__mulhi3/__musi3/` が適宜出力されるようにする。やるだけ。
+
+== 除算・剰余に対応する
+
+`__udivhi3/__udivsi3/__divhi3/__divsi3/__umodhi3/__modhi3`
+が適宜出力されるようにする。やるだけ。
+
+== `hlt` 疑似命令を追加する
+
+`js 0` のエイリアスとして `hlt` 疑似命令を追加する。やるだけ。
+
+== `crt0.o` と `cahp.lds` の導入
+
+スタートアップのためのオブジェクトファイル `crt0.o` と、
+リンカスクリプト `cahp.lds` を導入し、これが `sysroot` から読み込まれるように
+Clangの `CAHPToolChain` を改変する。なおこれらが `sysroot` にあるのは本来おかしいのだが、
+CAHPがベアメタル専用アーキテクチャのようになっている現状、
+これらのファイルをどこに置けばよいかは判然としない。TODO
+
+`cahp.lds` と、 `crt0.o` の元になる `crt0.s` は `cahp-rt` という
+レポジトリで管理することにする。このあたりはRV16Kと変わらない。
+
+== `--nmagic` の有効化
+
+セクションのページサイズでのアラインメントを無効化して、
+リンク後のバイナリサイズを小さくする。RV16Kのときには `--omagic` を使用していたが、
+これは `.text` に書き込み可フラグを立てるためにセキュリティ上問題がある。
+LLVM 9.0.0にてLLDに導入された `--nmagic` を使えばこの問題は発生しない。
+
+実装はやるだけ。
+
+== libcの有効化
+
+`-nostdlib` や `-nodefaultlibs` が指定されない限りにおいて `-lc` を自動的に指定する。
+やるだけ。 `cahp-rt` と合わせて、これで掛け算や割り算を使用できるようになった。
+
+== `li a0, foo` をエラーにする
+
+`li` や `addi` などの即値オペランドには10bit符号付き即値が指定される。
+ここにシンボルが指定される場合、そのシンボルは `%lo(...)` という形をとる
+必要がある。つまり何もmodifierが付与されていないシンボル（bare symbol）を
+受理してはいけない。例えば次のような入力をエラーとする必要がある。
+
+    li a0, foo
+
+RISC-Vでは<<llvm_phabricator-d51732>>にてこれに対応している。
+このコミットを参考にして修正する。
+
+`AsmParser` の `isSImm10` にてシンボルを扱う場合には i)
+そのシンボルに `%lo` が付されている、あるいは ii) bare symbolでかつ定数式である
+ときのみ `true` を返し符号付き10bit即値として認める。
+なお、条件分岐命令のオペランドも符号付き10bit即値を受け取るが、
+こちらはbare symbolでなければならない。そこで `simm10_branch` には
+`isBareSImm10` という新しい関数を参照させ、単にbare symbolであるか否かを
+調べることにしておく。
+
+`%hi` についても `isSImm6` について同様の処理を行う。
+
+== `llvm-objdump` の調査
+
+`llvm-objdump -D hoge` として `.text` セクション以外でデコードできなくて死ぬ。
+
+    llvm-objdump: /llvm-project/llvm/lib/Target/CAHP/Disassembler/CAHPDisassembler.cpp:73: DecodeStatus decodeUImmOperand(llvm::MCInst &, uint64_t, int64_t, const void *) [N = 4]: Assertion `isUInt<N>(Imm) && "Invalid immediate"' failed.
+
+リリース版ビルドだと発生しない。謎。
+
+24bit命令の10bit即値と4bit即値、及び16bit命令の6bit即値と4bit即値を、
+同じ命令のクラスとしてTableGenにて記述していたことが原因だった。
+すなわち次のような `CAHPInst24I` クラスで10bit/4bit即値を受け取る命令の両方を
+処理していたことが原因だった。
+
+    class CAHPInst24I<bits<6> opcode, dag outs, dag ins, string opcodestr, string argstr>
+    : CAHPInst24<outs, ins, opcodestr, argstr> {
+      bits<4> rd;
+      bits<4> rs1;
+      bits<10> imm;
+
+      let Inst{23-16} = imm{7-0};
+      let Inst{15-12} = rs1;
+      let Inst{11-8} = rd;
+      let Inst{7-6} = imm{9-8};
+      let Inst{5-0} = opcode;
+    }
+
+このとき「まともな」ELFバイナリであれば、4bit即値を受け取る命令（ `lsri` など）の
+6-7ビット目と20-23ビット目には0が入っているため `imm` は正しく4bit即値となる。
+しかし実際にはこれらのビットはdon't careであり、0が入っているとは限らないうえ、
+不正なバイナリであれば何が入っているかわからない。上の `llvm-objdump` を使った際には
+これらのビットが0ではなく、結果として4bitよりも大きい値が `imm` に入ってしまった。
+
+これを防ぐためには、4bit即値と10bit即値を受け取る命令のクラスを分ければ良い。
+
+....
+// 24-bit I-instruction format for 10bit immediate
+class CAHPInst24I_10<bits<6> opcode, dag outs, dag ins, string opcodestr, string argstr>
+: CAHPInst24<outs, ins, opcodestr, argstr> {
+  bits<4> rd;
+  bits<4> rs1;
+  bits<10> imm;
+
+  let Inst{23-16} = imm{7-0};
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-6} = imm{9-8};
+  let Inst{5-0} = opcode;
+}
+
+// 24-bit I-instruction format for 4bit immediate
+class CAHPInst24I_4<bits<6> opcode, dag outs, dag ins, string opcodestr, string argstr>
+: CAHPInst24<outs, ins, opcodestr, argstr> {
+  bits<4> rd;
+  bits<4> rs1;
+  bits<4> imm;
+
+  let Inst{23-20} = 0;
+  let Inst{19-16} = imm{3-0};
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-6} = 0;
+  let Inst{5-0} = opcode;
+}
+....
+
+16bit命令の `CAHPInst16I` についても同様である。
+
+せっかくなので、回帰バグを防ぐためにテストを書く。
+不正なバイト列footnote:[ISA上はdont' careのbitが0でないだけで不正ではないが、
+LLVMバックエンドとしてはこれらを0として扱うことにする。]に対して
+正しくunknownが出力されるかをチェックする。
+
+どこに書くのがLLVMとして正当なのかわからないが、
+とりあえずllvm-objdumpのテストとして書くことにする。x86の
+`disassemble-invalid-byte-sequences.test` を参考にする。
+`yaml2obj` を使えばすきなELFバイナリを作ることができるので便利だ。
+
+== スタックを利用した引数渡し
+
+やるだけ。先達はなんとやら。
+
+== `byval` の対応
+
+やるだけ。 `byval` が絡むのは関数呼び出しの引数だけで、
+呼ばれる側や戻り値には関係がないことに注意。
+呼ばれる側はポインタが渡される場合と変わりなく、
+戻り値は `sret` として引数に組み込まれる。
+
+== 命令スケジューリングの実装
+
+cahp-emerald以降はスーパースカラに対応するらしいので、
+LLVM側でもスーパスカラで効率的に動作するアセンブリを出力できるように
+調整する。具体的には命令スケジューリングの設定をする。
+残念ながらRISC-Vではこの設定は為されていないようだfootnote:[単一の
+プロセッサをターゲットとしているわけではないからだろうか。]。
+LanaiやSparc・ARMなどのバックエンドを参考にする。
+また<<fox-llvm>>にも記述がある。
+<<llvm_dev_ml-098535>>も参考になる。
+
+`include/llvm/Target/TargetSchedule.td` によると、
+命令スケジューリングにはいくつかの方法があり、
+さらにこれらが有機的に構成されているようだ<<llvm_devmtg-schedmachinemodel>>。
+
+<<fox-llvm>>によればinstruction itinerariesを利用する場合、
+TableGenファイルに各命令が属する命令スケジュールを記述する。
+スケジュール自体は `CAHPSchedule.td` に定義し、これを `CAHPInstrFormats.td`
+や `CAHPInstrInfo.td` で使う。
+
+`FuncUnit` のインスタンスとして機能ユニットを定義し、
+`InstrItinClass` のインスタンスとして命令スケジュールを定義する。
+各命令はいずれかの `InstrItinClass` に属する。
+
+どの `InstrItinClass` がどのように共有リソース（機能ユニット）を利用するかを
+記述するために `ProcessorItineraries` のインスタンスを定義する。
+ここでは `InstrStage` を用いて、各命令がその処理を完了するまでに何サイクルかかり、
+どの機能ユニットを使用するかを記述する。
+
+ある命令がどの `InstrItinClass` に属するかは `Instruction` クラスの
+`Itinerary` 属性に `InstrItinClass` を入れておくことによって記述される。
+
+しかし上記のようなやり方は古いものとなっているようだ。（要確認; TODO
+footnote:[LLVMのスケジューリング手法は一度大きく変わっている
+<<llvm_devmtg-schedmachinemodel>><<llvm_devmtg-writinggreatsched>><<llvm_devmtg-larintrick>>。
+`InstrItinClass` などを使用する方法が古いスケジューリング手法と新しいスケジューリング手法の
+どちらに入るのか良くわからない。
+ただし `TargetSchedule.td` にて `TargetItinerary.td` を `include` する箇所には
+"Include legacy support for instruction itineraries."とコメントされているので、
+古いほうである可能性が高い。]）
+<<llvm_devmtg-schedmachinemodel>><<llvm_devmtg-writinggreatsched>><<llvm_devmtg-larintrick>>
+<<llvm-schedinorder>>を参考にし、 `SchedMachineModel` をベースとして実装する。
+このとき参考になるのはAArch64で、特に `AArch64SchedA53.td` である<<llvm_dev_ml-098535>>。
+
+次の4ステップで実装する<<llvm_devmtg-writinggreatsched>>。
+まずi) `SchedWrite` と `SchedRead` を用いてtargetごとにoperand categoryを定義し、ii)
+その後それらを実際の命令と結びつける。これは命令に `Sched` を継承させることで実現する。
+`Sched` の引数にはオペランドに対応するoperand categoryを順に渡す。
+例えばADDならwrite, read, readのように並ぶことになる。
+
+次にiii) sub-target毎に `SchedMachineModel` を用いてモデルを定義するfootnote:[ここでは、
+「基本的なISAが同じ（単一のtarget）で、それを実装するプロセッサ毎にスペックが異なる
+（sub-target）」というコンセプトが採用されている。]。
+ここで「一度にどれだけの命令を発行できるか」などを決める。
+最後にiv) `ProcResource` を用いてそのsub-targetがいくつの共有リソースを持っているか決め、
+`WriteRes` を用いてそれらをoperand categoryと結びつける。同時に、その命令を実行するのに
+何サイクルかかるかを `Latency` として記述する。
+
+以上で記述した情報を用いて、LLVM core（の `MachineScheduler` ）は命令列をシミュレーションし、
+ヒューリスティックを用いてよしなに命令をスケジュールしてくれるらしい。
+ほかにも `ReadAdvance` を用いてフォワーディングを表現したりできるfootnote:[ただしこれは
+`Latency` で表現できることが多いように思う。要検討；TODO]。
+詳しくは<<llvm_devmtg-writinggreatsched>>を参考のこと。
+
+`Latency` の単位が良くわからない。Cortex-A53のパイプライン図<<anandtech-11441>>
+と比較すると `AArch64SchedA53.td` の記述はfull latencyを4とするなど、
+明らかに間違っているように見える。
+また `WriteRes` と `ReadAdvance` の両方でフォワーディングを考慮するのは二重でreduced
+cycleをカウントしているようにも見える。わけが分からん。
+
+`include/llvm/MC/MCSchedule.h` を読む。Latencyの概念については
+`struct MCSchedModel` のコメントが（多少）参考になる。
+
+....
+/// The abstract pipeline is built around the notion of an "issue point". This
+/// is merely a reference point for counting machine cycles. The physical
+/// machine will have pipeline stages that delay execution. The scheduler does
+/// not model those delays because they are irrelevant as long as they are
+/// consistent. Inaccuracies arise when instructions have different execution
+/// delays relative to each other, in addition to their intrinsic latency. Those
+/// special cases can be handled by TableGen constructs such as, ReadAdvance,
+/// which reduces latency when reading data, and ResourceCycles, which consumes
+/// a processor resource when writing data for a number of abstract
+/// cycles.
+....
+
+TableGenコードのデバッグをする際には次のようにすればよいらしい<<llvm_devmtg-writinggreatsched>>。
+
+    $ llvm-tblgen --debug-only=subtarget-emitter --print-records -I=/work/llvm.org/llvm/include/...
+
+これまでのプロセッサ（generic; スーパースカラなし）と
+これからのプロセッサ（emerald; スーパースカラあり）を
+区別して扱うためにsubtargetを追加する。これによってARMのように
+`-mcpu=generic` ・ `-mcpu=emerald` などとオプションとして
+指定できるようになる。
+
+コード上は `ProcessorModel` を新たに追加するだけである。
+ARMでは `ProcA53` という `SubtargetFeature` を定義しているが、
+特別いじる属性などはないためこれは作成しない。
+ただしこれだけでは `llc` のオプションとしては `-mcpu` が機能するが、
+`clang` に渡すと `argument unused during compilation: '-mcpu=emerald'`
+というエラーが出てしまう。
+
+これに対応するためには `clang` でのオプション解析を行う必要がある。
+すなわち `Driver/ToolChains/CommonArgs.cpp` の `tools::getCPUName` をいじって
+`Driver/ToolChains/Arch/CAHP.cpp` の `cahp::getCAHPTargetCPU` が呼ばれるようにする
+foonote:[ちなみにtarget featuresをいじる場合は `Driver/ToolChains/Clang.cpp` の
+`getTargetFeatures` をいじれば良いようだ。]。
+さらにClangの `CAHPTargetInfo` をいじって `isValidCPUName` などを正しく実装する。
+ARMだとClang側からLLVM coreのsupport関数を呼び出すなどして大変なことになっているが、
+その本質はLanaiのバックエンドが分かりやすい。要するに `StringSwitch` を使って、
+引数の文字列がCPUの名前として正しいかどうかを振り分けているだけである。
+この実装によって「 `-mcpu` が渡された場合にはその引数をcpu nameとして後の処理に回す」
+「渡されたcpu nameが正しいものであるかを判断し、正しければLLVM coreに渡す」という
+処理が実装でき、無事Clangでも `-mcpu` が使用できるようになる。
+
+次のようにすれば `generic` の場合と `emerald` の場合の差を見ることができる。
+
+    $ ls bf.c | while read line; do \
+        diff <(bin/clang -target cahp -mcpu=generic -c -S -o - -Oz $line) \
+             <(bin/clang -target cahp -mcpu=emerald -c -S -o - -Oz $line); done
+
+スケジューリングの詳細を知りたい場合は次のように `llc` を実行する。
+
+    $ bin/llc -enable-misched -debug-only=machine-scheduler
+
+なお `clang` で間接的に `llc` を実行したい場合は `-mllvm` オプションにつなげれば良い
+<<llvm-schedinorder>>。（未確認；TODO）
+
+    $ clang ... -mllvm -enable-misched -mllvm -enable-post-misched -mllvm -misched-postra
+
+ただこれらを見ても、なにをもってLLVMがスケジューリングしているのかは
+そこまで自明ではないfooatnote:[`SU` は `SUnit` の略で、多分これはschedule unitの略で、
+つまりスケジューリングの単位なので、各々の命令のことのようだ。]。
+emeraldのエミュレーションで評価するのが一番適切である。TODO
+
+`CAHPSubtarget` にて `enableMachineScheduler` をオーバーライドし
+`true` を返すようにしなければ新しいスケジューラである
+MISchedulerを使用してくれないようだ<<llvm_devmtg-schedmachinemodel>>footnote:[これによって
+`llc` に `-enable-misched` オプションが渡る。]footnote:[これによってテストが壊れるので
+修正する。]。
+また同様に `enablePostRAScheduler` から `true` を返すようにしなければ、
+レジスタ割り付け後のスケジューリングは行ってくれないようだが、
+こちらは実行時エラーが出てしまった。
+
+`ReadALU` のような `ReadSched` は、命令の `Sched` に指定するだけではエラーに
+なってしまう。 `ReadAdvance` などで使用しなければいけない。逆に言えば、
+特別な属性を指定する必要が無いのであれば作る必要はない。
+また複数の `ReadAdvance` を同じ `Read*` に対して定義することはできない。
+この制限により「 `WriteALU` には `2` で `WriteLdSt` には `1` 」のようなことはできないようだ。
+
+emeraldを「正しく」モデル化しようとすると `WriteALU/WriteLdSt` のlatencyはともに3、
+`ReadAdvance` で `WriteALU` は2, `WriteLdSt` は1とするのが筋のように思えるが、
+上記の理由からこれは不可能である。仕方がないので `WriteALU` のlatencyを1, `WriteLdSt` を2
+とする。
+
+`enablePostRAScheduler` を `true` にしたい。 `enablePostRAScheduler` のコメントを読むと
+`SchedMachineModel` にて `let PostRAScheduler = 1;` としろと
+書いてあるfootnote:[`PostRAScheduling` が原文ママだがこれは `PostRAScheduler` の誤植のようだ。]
+のでそうするが、同じエラーが出る。
+
+    clang-9: /llvm-project/llvm/lib/CodeGen/MachineBasicBlock.cpp:1494: MachineBasicBlock::livein_iterator llvm::MachineBasicBlock::livein_begin() const: Assertion `getParent()->getProperties().hasProperty( MachineFunctionProperties::Property::TracksLiveness) && "Liveness information is accurate"' failed.
+
+どうやら一部のbasic blockに `TracksLiveness` というフラグが立っていないことが原因のようだ。
+このフラグについては `MachineFunctionProperties` のコメントに次のようにある。
+
+  // TracksLiveness: True when tracking register liveness accurately.
+  //  While this property is set, register liveness information in basic block
+  //  live-in lists and machine instruction operands (e.g. kill flags, implicit
+  //  defs) is accurate. This means it can be used to change the code in ways
+  //  that affect the values in registers, for example by the register
+  //  scavenger.
+  //  When this property is clear, liveness is no longer reliable.
+
+AVRやWebAssemblyはこれを次のように明示的に立てている場所がある。
+
+    MF.getProperties().set(MachineFunctionProperties::Property::TracksLiveness);
+
+とりあえず次のように `assert` をコメントアウトすれば動作した。
+
+    MachineBasicBlock::livein_iterator MachineBasicBlock::livein_begin() const {
+      //assert(getParent()->getProperties().hasProperty(
+      //    MachineFunctionProperties::Property::TracksLiveness) &&
+      //    "Liveness information is accurate");
+      return LiveIns.begin();
+    }
+
+`BranchFolder::OptimizeFunction` で `MRI.invalidateLiveness()` が呼び出されることが
+原因のようだ。これを抑制するためには `TargetRegisterInfo::trackLivenessAfterRegAlloc` を
+`CAHPRegisterInfo` でオーバーライドして `true` を返すようにすれば良い
+footnote:[RISC-Vではbranch relaxationに対応させる際に実装されていた<<github_riscv-llvm_patch_31>>。]。
+これで `let PostRAScheduler = 1;` とできるようになった。
+
+== 動的なスタック領域確保に対応する
+
+やるだけ。
+
+== `frameaddr/returnaddr` に対応する
+
+やるだけ。 `frameaddr-returnaddr.ll` の `test_frameaddress_3_alloca` は
+存在価値がよく分からなかったので削った。
+
+== emergency spillに対応する
+
+RV16Kのときには即値幅が小さすぎたために対応しなかったが、
+今回は `li` の即値幅が10bitあることもあり対応したほうがよさそうだ。
+RISC-Vの実装にならい、スタックサイズが符号付き9bitに収まらない（256バイト以上）ときに
+emergency spill slotをスタック上に用意し、どんなときでもレジスタを対比できるようにしておく。
+emergency spillの実装そのものは<<github_riscv-llvm_patch_32>>を参考にすればよく、
+それほど難しくない。
+
+むしろ同実装のテストケースが、その意味を理解するという点では難解である。
+CAHPの場合は次のようなテストになった。
+
+  %data = alloca [ 3000 x i16 ], align 2
+  %ptr = getelementptr inbounds [3000 x i16], [3000 x i16]* %data, i16 0, i16 1000
+  %1 = tail call { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } asm sideeffect "nop", "=r,=r,=r,=r,=r,=r,=r,=r,=r,=r,=r,=r,=r"()
+  %asmresult0 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 0
+  %asmresult1 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 1
+  %asmresult2 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 2
+  %asmresult3 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 3
+  %asmresult4 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 4
+  %asmresult5 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 5
+  %asmresult6 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 6
+  %asmresult7 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 7
+  %asmresult8 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 8
+  %asmresult9 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 9
+  %asmresult10 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 10
+  %asmresult11 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 11
+  %asmresult12 = extractvalue { i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16, i16 } %1, 12
+  store volatile i16 %a, i16* %ptr
+  tail call void asm sideeffect "nop", "r,r,r,r,r,r,r,r,r,r,r,r,r"(i16 %asmresult0, i16 %asmresult1, i16 %asmresult2, i16 %asmresult3, i16 %asmresult4, i16 %asmresult5, i16 %asmresult6, i16 %asmresult7, i16 %asmresult8, i16 %asmresult9, i16 %asmresult10, i16 %asmresult11, i16 %asmresult12)
+
+まず冒頭で大きくスタック上に領域を確保することにより、
+emergency spill slotの確保を実行させると同時に、以降のレジスタのspillに
+複数命令（典型的には `lui` と `addi` ）を要するようにする。
+この領域は、以降のコードを最適化によって
+消されること無く確実に実行するためにも用いられるfootnote:[本当にそうかは未確認；TODO]。
+
+次にインラインアセンブリを用いて `nop` を呼び出す。この `nop` は13個footnote:[この値は
+実験的に求めた。この値を超えるとレジスタ割り付けを行うことができない。
+この値が理論的にどこから来ているのかは未確認；TODO]のレジスタに値を
+書き込む命令として扱う。これによって大量のレジスタを消費し、コード生成部にregister pressureを
+かけることがこのテストの本質である。すなわちこの `nop` を実行する際には大量のレジスタのspillが
+発生しfootnote:[これは生成されるアセンブリを見れば明らかである。]、しかもそれらは
+一命令で行うことができない。したがってemergency spillが発生する。
+以降のコードは、この `nop` が最適化によって
+消されること無く確実に実行するためのコードであると推察されるfootnote:[本当にそうかは未確認
+；TODO]。
+
+== -----DONE LINE -----
+== 末尾再帰の対応
+== 落ち穂拾い
+=== `ROTL/ROTR/BSWAP/CTTZ/CTLZ/CTPOP` に対応する
+=== 32bitのシフトに対応する
+=== 間接ジャンプに対応する
+=== `BlockAddress` のlowerに対応する
+== 可変長引数関数
+== デバッグ情報の出力
+
+== `MachineBlockPlacement` のrollback<<llvm_phabricator-d43256>>
+
+これ違うっぽい。
+
+[bibliography]
+== 参照
+
+- [[[github_riscv-llvm_docs_01,1]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/01-intro-and-building-llvm.mkd
+- [[[llvm_getting-started,2]]] https://llvm.org/docs/GettingStarted.html
+- [[[clang_gettings-started,3]]] https://clang.llvm.org/get_started.html
+- [[[asciidoctor_user-manual,4]]] https://asciidoctor.org/docs/user-manual/
+- [[[riscv,5]]] https://riscv.org/
+- [[[riscv_specifications,6]]] https://riscv.org/specifications/
+- [[[fox-llvm,7]]] 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』（柏木 餅子・風薬・矢上 栄一、株式会社インプレス、2013年）
+- [[[github_riscv-llvm_docs_02,8]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/02-starting-the-backend.mkd
+- [[[github_riscv-llvm_patch_02,9]]] https://github.com/lowRISC/riscv-llvm/blob/master/0002-RISCV-Recognise-riscv32-and-riscv64-in-triple-parsin.patch
+- [[[github_riscv-llvm,10]]] https://github.com/lowRISC/riscv-llvm
+- [[[youtube_llvm-backend-development-by-example,11]]] https://www.youtube.com/watch?v=AFaIP-dF-RA
+- [[[msyksphinz_try-riscv64-llvm-backend,12]]] http://msyksphinz.hatenablog.com/entry/2019/01/02/040000_1
+- [[[github_riscv-llvm_patch_03,13]]] https://github.com/lowRISC/riscv-llvm/blob/master/0003-RISCV-Add-RISC-V-ELF-defines.patch
+- [[[github_riscv-llvm_patch_04,14]]] https://github.com/lowRISC/riscv-llvm/blob/master/0004-RISCV-Add-stub-backend.patch
+- [[[github_riscv-llvm_patch_06,15]]] https://github.com/lowRISC/riscv-llvm/blob/master/0006-RISCV-Add-bare-bones-RISC-V-MCTargetDesc.patch
+- [[[github_riscv-llvm_patch_10,16]]] https://github.com/lowRISC/riscv-llvm/blob/master/0010-RISCV-Add-support-for-disassembly.patch
+- [[[llvm-writing_backend-operand_mapping,17]]] https://llvm.org/docs/WritingAnLLVMBackend.html#instruction-operand-mapping
+- [[[llvm-writing_backend,18]]] https://llvm.org/docs/WritingAnLLVMBackend.html
+- [[[github_riscv-llvm_patch_07,19]]] https://github.com/lowRISC/riscv-llvm/blob/master/0007-RISCV-Add-basic-RISCVAsmParser.patch
+- [[[github_riscv-llvm_patch_08,20]]] https://github.com/lowRISC/riscv-llvm/blob/master/0008-RISCV-Add-RISCVInstPrinter-and-basic-MC-assembler-te.patch
+- [[[llvm-tablegen,21]]] https://llvm.org/docs/TableGen/index.html
+- [[[github_riscv-llvm_patch_09,22]]] https://github.com/lowRISC/riscv-llvm/blob/master/0009-RISCV-Add-support-for-all-RV32I-instructions.patch
+- [[[llvm_dev_ml-tablegen_definition_question,23]]] http://lists.llvm.org/pipermail/llvm-dev/2015-December/093310.html
+- [[[llvm_doxygen-twine,24]]] https://llvm.org/doxygen/classllvm_1_1Twine.html
+- [[[llvm-tablegen-langref,25]]] https://llvm.org/docs/TableGen/LangRef.html
+- [[[github_riscv-llvm_docs_05,26]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/05-disassembly.mkd
+- [[[github_riscv-llvm_patch_11,27]]] https://github.com/lowRISC/riscv-llvm/blob/master/0011-RISCV-Add-common-fixups-and-relocations.patch
+- [[[github_riscv-llvm_docs_06,28]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/06-relocations-and-fixups.mkd
+- [[[github_riscv-llvm_patch_13,29]]] https://github.com/lowRISC/riscv-llvm/blob/master/0013-RISCV-Initial-codegen-support-for-ALU-operations.patch
+- [[[speakerdeck-llvm_backend_development,30]]] https://speakerdeck.com/asb/llvm-backend-development-by-example-risc-v
+- [[[llvm-code_generator,31]]] https://llvm.org/docs/CodeGenerator.html
+- [[[llvm-code_generator-target_independent_code_gen_alg,32]]] https://llvm.org/docs/CodeGenerator.html#target-independent-code-generation-algorithms
+- [[[llvm-code_generator-selectiondag_instruction_selection,33]]] https://llvm.org/docs/CodeGenerator.html#selectiondag-instruction-selection-process
+- [[[github_riscv-llvm_patch_15,34]]] https://github.com/lowRISC/riscv-llvm/blob/master/0015-RISCV-Codegen-support-for-memory-operations.patch
+- [[[cpu0,35]]] https://jonathan2251.github.io/lbd/
+- [[[elvm-llvm_backend,36]]] https://github.com/shinh/llvm/tree/elvm
+- [[[elvm-slide,37]]] http://shinh.skr.jp/slide/llel/000.html
+- [[[github_riscv-llvm_patch_16,38]]] https://github.com/lowRISC/riscv-llvm/blob/master/0016-RISCV-Codegen-support-for-memory-operations-on-globa.patch
+- [[[github_riscv-llvm_patch_17,39]]] https://github.com/lowRISC/riscv-llvm/blob/master/0017-RISCV-Codegen-for-conditional-branches.patch
+- [[[todai_llvm_backend,40]]] https://github.com/cpu-experiment-2018-2/llvm/tree/master/lib/Target/ELMO
+- [[[todai_llvm_backend-article,41]]] http://uenoku.hatenablog.com/entry/2018/12/25/044244
+- [[[github_riscv-llvm_patch_18,42]]] https://github.com/lowRISC/riscv-llvm/blob/master/0018-RISCV-Support-for-function-calls.patch
+- [[[llvm-langref,43]]] http://llvm.org/docs/LangRef.html
+- [[[fpga_develop_diary,44]]] http://msyksphinz.hatenablog.com/
+- [[[llvm-anton_korobeynikov_2012,45]]] https://llvm.org/devmtg/2012-04-12/Slides/Workshops/Anton_Korobeynikov.pdf
+- [[[llvm-welcome_to_the_back_end_2017,46]]] https://www.youtube.com/watch?v=objxlZg01D0
+- [[[ean10-howto-llvmas,47]]] https://www.embecosm.com/appnotes/ean10/ean10-howto-llvmas-1.0.html
+- [[[lowrisc-devmtg18,48]]] https://www.lowrisc.org/llvm/devmtg18/
+- [[[LLVMBackend_2015_03_26_v2,49]]] http://www.inf.ed.ac.uk/teaching/courses/ct/other/LLVMBackend-2015-03-26_v2.pdf
+- [[[rui-compilerbook,50]]] https://www.sigbus.info/compilerbook
+- [[[krister-writing_gcc_backend,51]]] https://kristerw.blogspot.com/2017/08/writing-gcc-backend_4.html
+- [[[llvm-ml-129089,52]]] http://lists.llvm.org/pipermail/llvm-dev/2019-January/129089.html
+- [[[llvm-langref-datalayout,53]]] https://llvm.org/docs/LangRef.html#langref-datalayout
+- [[[github-frasercrmck_llvm_leg,54]]] https://github.com/frasercrmck/llvm-leg/tree/master/lib/Target/LEG
+- [[[llvm_doxygen-InitMCRegisterInfo,55]]] https://llvm.org/doxygen/classllvm_1_1MCRegisterInfo.html#a989859615fcb74989b4f978c4d227a03
+- [[[llvm-programmers_manual,56]]] http://llvm.org/docs/ProgrammersManual.html
+- [[[llvm-writing_backend-calling_conventions,57]]] https://llvm.org/docs/WritingAnLLVMBackend.html#calling-conventions
+- [[[riscv-calling,58]]] https://riscv.org/wp-content/uploads/2015/01/riscv-calling.pdf
+- [[[llvm_dev_ml-how_to_debug_instruction_selection,59]]] http://lists.llvm.org/pipermail/llvm-dev/2017-August/116501.html
+- [[[fpga_develop_diary-20190612040000,60]]] http://msyksphinz.hatenablog.com/entry/2019/06/12/040000
+- [[[llvm_dev_ml-br_cc_questions,61]]] http://lists.llvm.org/pipermail/llvm-dev/2014-August/075303.html
+- [[[llvm_dev_ml-multiple_result_instrs,62]]] https://groups.google.com/forum/#!topic/llvm-dev/8kPOj-_lbGk
+- [[[stackoverflow-frame_lowering,63]]] https://stackoverflow.com/questions/32872946/what-is-stack-frame-lowering-in-llvm
+- [[[llvm_dev_ml-selecting_frame_index,64]]] https://groups.google.com/d/msg/llvm-dev/QXwtqgau-jA/PwnHDF0gG_oJ
+- [[[fpga_develop_diary-llvm,65]]] https://github.com/msyksphinz/llvm/tree/myriscvx/impl90/lib/Target/MYRISCVX
+- [[[llvm-github_cd44ae,66]]] https://github.com/llvm/llvm-project/commit/cd44aee3da22f9a618f2e63c226bebf615fa8cf8
+- [[[llvm_phabricator-d43752,67]]] https://reviews.llvm.org/D43752
+- [[[llvm-compilerwriterinfo,68]]] https://llvm.org/docs/CompilerWriterInfo.html
+- [[[wikipedia-The_Gleaners,69]]] https://en.wikipedia.org/wiki/The_Gleaners
+- [[[github_riscv-llvm_patch_20,70]]] https://github.com/lowRISC/riscv-llvm/blob/master/0020-RISCV-Support-and-tests-for-a-variety-of-additional-.patch
+- [[[llvm_phabricator-d47422,71]]] https://reviews.llvm.org/D47422
+- [[[llvm-extendingllvm,72]]] https://llvm.org/docs/ExtendingLLVM.html
+- [[[llvm_dev_ml-001264,73]]] http://lists.llvm.org/pipermail/llvm-dev/2004-June/001264.html
+- [[[llvm_phabricator-d42958,74]]] https://reviews.llvm.org/D42958
+- [[[compiler_rt,75]]] https://compiler-rt.llvm.org/
+- [[[github-riscv_compiler_rt,76]]] https://github.com/andestech/riscv-compiler-rt
+- [[[github_riscv-llvm_patch_27,77]]] https://github.com/lowRISC/riscv-llvm/blob/master/0027-RISCV-Support-stack-frames-and-offsets-up-to-32-bits.patch
+- [[[llvm_phabricator-d44885,78]]] https://reviews.llvm.org/D44885
+- [[[llvm_phabricator-d45859,79]]] https://reviews.llvm.org/D45859
+- [[[llvm-langref-poison_value,80]]] http://llvm.org/docs/LangRef.html#poisonvalues
+- [[[github-emscripten-issues-34,81]]] https://github.com/emscripten-core/emscripten/issues/34
+- [[[switch_lowering_in_llvm,82]]] http://fileadmin.cs.lth.se/cs/education/edan75/part2.pdf
+- [[[github-avr_llvm-issues-88,83]]] https://github.com/avr-llvm/llvm/issues/88
+- [[[asciidoctor-quickref,84]]] https://asciidoctor.org/docs/asciidoc-syntax-quick-reference/
+- [[[llvm_phabricator-d56351,85]]] https://reviews.llvm.org/D56351
+- [[[hatenablog-rhysd-230119,86]]] https://rhysd.hatenablog.com/entry/2017/03/13/230119
+- [[[llvm_dev_ml-115805,87]]] http://lists.llvm.org/pipermail/llvm-dev/2017-July/115805.html
+- [[[github_riscv-llvm_patch_29,88]]] https://github.com/lowRISC/riscv-llvm/blob/master/0029-RISCV-Add-support-for-llvm.-frameaddress-returnaddre.patch
+- [[[github-riscv_llvm-clang,89]]] https://github.com/lowRISC/riscv-llvm/tree/master/clang
+- [[[github-elvm_clang,90]]] https://github.com/shinh/clang/tree/elvm
+- [[[github_riscv-llvm_patch_22,91]]] https://github.com/lowRISC/riscv-llvm/blob/master/0022-RISCV-Support-lowering-FrameIndex.patch
+- [[[llvm_dev_ml-087879,92]]] http://lists.llvm.org/pipermail/llvm-dev/2015-July/087879.html
+- [[[stackoverflow-27467293,93]]] https://stackoverflow.com/questions/27467293/how-to-force-clang-use-llvm-assembler-instead-of-system
+- [[[github-riscv_llvm-clang-03,94]]] https://github.com/lowRISC/riscv-llvm/blob/master/clang/0003-RISCV-Implement-clang-driver-for-the-baremetal-RISCV.patch
+- [[[github_riscv-llvm_patch_25,95]]] https://github.com/lowRISC/riscv-llvm/blob/master/0025-RISCV-Add-custom-CC_RISCV-calling-convention-and-imp.patch
+- [[[llvm_dev_ml-106187,96]]] http://lists.llvm.org/pipermail/llvm-dev/2016-October/106187.html
+- [[[llvm_phabricator-d39322,97]]] https://reviews.llvm.org/D39322
+- [[[cpu0-lld,98]]] http://jonathan2251.github.io/lbt/lld.html
+- [[[youtube-how_to_add_a_new_target_to_lld,99]]] https://www.youtube.com/watch?v=FIXaeRU31Ww
+- [[[llvm-smith_newlldtargetpdf,100]]] https://llvm.org/devmtg/2016-09/slides/Smith-NewLLDTarget.pdf
+- [[[llvm-lld,101]]] https://lld.llvm.org/index.html
+- [[[note-n9948f0cc3ed3,102]]] https://note.mu/ruiu/n/n9948f0cc3ed3
+- [[[lanai-isa,103]]] https://docs.google.com/document/d/1jwAc-Rbw1Mn7Dbn2oEB3-0FQNOwqNPslZa-NDy8wGRo/pub
+- [[[github-blog_os-issues-370,104]]] https://github.com/phil-opp/blog_os/issues/370
+- [[[llvm_phabricator-d61688,105]]] https://reviews.llvm.org/D61688
+- [[[man-xtensa_linux_gnu_ld,106]]] https://linux.die.net/man/1/xtensa-linux-gnu-ld
+- [[[man-elf,107]]] https://linuxjm.osdn.jp/html/LDP_man-pages/man5/elf.5.html
+- [[[llvm_phabricator-d45385,108]]] https://reviews.llvm.org/D45385
+- [[[llvm_phabricator-d47882,109]]] https://reviews.llvm.org/D47882
+- [[[llvm_dev_ml-128257,110]]] https://lists.llvm.org/pipermail/llvm-dev/2018-December/128257.html
+- [[[github_riscv-llvm_patch_31,111]]] https://github.com/lowRISC/riscv-llvm/blob/master/0031-RISCV-Implement-support-for-the-BranchRelaxation-pas.patch
+- [[[github_riscv-llvm_patch_30,112]]] https://github.com/lowRISC/riscv-llvm/blob/master/0030-RISCV-Implement-branch-analysis.patch
+- [[[stackoverflow-5789806,113]]] https://stackoverflow.com/questions/5789806/meaning-of-and-in-c
+- [[[compiler_study_report,114]]] https://proc-cpuinfo.fixstars.com/2018/11/compiler_study_report/
+- [[[github-llvm-bcb36be8e3f5dced36710ba1a2e2206071ccc7ba,115]]] https://github.com/llvm/llvm-project/commit/bcb36be8e3f5dced36710ba1a2e2206071ccc7ba
+- [[[llvm_dev_ml-059799,116]]] http://lists.llvm.org/pipermail/llvm-dev/2013-February/059799.html
+- [[[tricore-llvm-slides,117]]] https://reup.dmcs.pl/wiki/images/7/7a/Tricore-llvm-slides.pdf
+- [[[tricore-llvm,118]]] https://opus4.kobv.de/opus4-fau/files/1108/tricore_llvm.pdf
+- [[[llvm_dev_ml-111697,119]]] http://lists.llvm.org/pipermail/llvm-dev/2017-April/111697.html
+- [[[takayuki-no09,120]]] http://www.ertl.jp/~takayuki/readings/c/no09.html
+- [[[hwenginner-linker,121]]] https://hwengineer.github.io/linker/
+- [[[koikikukan-000300,122]]] http://www.koikikukan.com/archives/2017/04/05-000300.php
+- [[[stackoverflow-57735654_34997577,123]]] https://stackoverflow.com/questions/34997577/linker-script-allocation-of-bss-section#comment57735654_34997577
+- [[[redhat-ld_simple_example,124]]] https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/4/html/Using_ld_the_GNU_Linker/simple-example.html
+- [[[llvm_phabricator-d45395,125]]] https://reviews.llvm.org/D45395
+- [[[llvm_phabricator-d45395-398662,126]]] https://reviews.llvm.org/D45395#inline-398662
+- [[[llvm-langref-inline_asm,127]]] http://llvm.org/docs/LangRef.html#inline-assembler-expressions
+- [[[hazymoon-gcc_inline_asm,128]]] http://caspar.hazymoon.jp/OpenBSD/annex/gcc_inline_asm.html
+- [[[github_riscv-llvm_patch_28,129]]] https://github.com/lowRISC/riscv-llvm/blob/master/0028-RISCV-Add-basic-support-for-inline-asm-constraints.patch
+- [[[llvm-langref-inline_asm-asm_template_argument_modifier,130]]] http://llvm.org/docs/LangRef.html#asm-template-argument-modifiers
+- [[[github-llvm-0715d35ed5ac2312951976bee2a0d2587f98f39f,131]]] https://github.com/llvm/llvm-project/commit/0715d35ed5ac2312951976bee2a0d2587f98f39f
+- [[[github_riscv-llvm_patch_32,132]]] https://github.com/lowRISC/riscv-llvm/blob/master/0032-RISCV-Reserve-an-emergency-spill-slot-for-the-regist.patch
+- [[[github_riscv-llvm_patch_26,133]]] https://github.com/lowRISC/riscv-llvm/blob/master/0026-RISCV-Support-for-varargs.patch
+- [[[github-fracture-wiki-how-dagisel-works,134]]] https://github.com/draperlaboratory/fracture/wiki/How-TableGen%27s-DAGISel-Backend-Works
+- [[[welcome_to_the_back_end-slides,135]]] http://llvm.org/devmtg/2017-10/slides/Braun-Welcome%20to%20the%20Back%20End.pdf
+- [[[life_of_an_instruction,136]]] https://eli.thegreenplace.net/2012/11/24/life-of-an-instruction-in-llvm/
+- [[[shinh-blog-010637,137]]] http://shinh.hatenablog.com/entry/2014/10/03/010637
+- [[[llvm_backend_intro,138]]] https://www.slideshare.net/AkiraMaruoka/llvm-backend
+- [[[amazon-llvm_cookbook-customer_review,139]]] https://www.amazon.co.jp/dp/178528598X#customer_review-R28L2NAL8T9M2H
+- [[[llvm_dev_ml-117139,140]]] https://lists.llvm.org/pipermail/llvm-dev/2017-September/117139.html
+- [[[github_riscv-llvm_patch_85,141]]] https://github.com/lowRISC/riscv-llvm/blob/master/0085-RISCV-Set-AllowRegisterRenaming-1.patch
+- [[[llvm_dev_ml-135337,142]]] https://lists.llvm.org/pipermail/llvm-dev/2019-September/135337.html
+- [[[wikipedia-weak_symbol,143]]] https://en.wikipedia.org/wiki/Weak_symbol
+- [[[wikipedia-remat,144]]] https://en.wikipedia.org/wiki/Rematerialization
+- [[[llvm_phabricator-d46182,145]]] https://reviews.llvm.org/D46182
+- [[[nakata-compiler,146]]] 『コンパイラの構成と最適化（第2版）』（中田育男、朝倉書店、2009）
+- [[[fpga_develop_diary-to_llvm9,147]]] http://msyksphinz.hatenablog.com/entry/2019/08/17/040000
+- [[[llvm_phabricator-d60488,148]]] https://reviews.llvm.org/D60488
+- [[[llvm_phabricator-rl364191,149]]] https://reviews.llvm.org/rL364191
+- [[[llvm_phabricator-d64121,150]]] https://reviews.llvm.org/D64121
+- [[[llvm-codingstandards,151]]] https://llvm.org/docs/CodingStandards.html
+- [[[llvm_dev_ml-134921,152]]] https://lists.llvm.org/pipermail/llvm-dev/2019-September/134921.html
+- [[[llvm_phabricator-d43256,153]]] https://reviews.llvm.org/D43256
+- [[[llvm_dev_ml-114675,154]]] http://lists.llvm.org/pipermail/llvm-dev/2017-June/114675.html
+- [[[llvm_phabricator-d42780,155]]] https://reviews.llvm.org/D42780
+- [[[llvm_phabricator-d51732,156]]] https://reviews.llvm.org/D51732
+- [[[llvm_devmtg-schedmachinemodel,157]]] http://llvm.org/devmtg/2014-10/Slides/Estes-MISchedulerTutorial.pdf
+- [[[llvm_dev_ml-098535,158]]] https://lists.llvm.org/pipermail/llvm-dev/2016-April/098535.html
+- [[[llvm_devmtg-writinggreatsched,159]]] https://www.youtube.com/watch?v=brpomKUynEA
+- [[[anandtech-11441,160]]] https://www.anandtech.com/show/11441/dynamiq-and-arms-new-cpus-cortex-a75-a55/4
+- [[[llvm_devmtg-larintrick,161]]] https://llvm.org/devmtg/2012-11/Larin-Trick-Scheduling.pdf
+- [[[llvm-schedinorder,162]]] https://llvm.org/devmtg/2016-09/slides/Absar-SchedulingInOrder.pdf

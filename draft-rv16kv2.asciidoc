@@ -1,0 +1,5433 @@
+= [下書き] LLVMバックエンド for RV16Kv2 開発文書
+艮鮟鱇 <ushitora@anqou.net>
+:toc: left
+
+== これはなに
+
+2019年にRV16Kv2という自作ISA用のLLVMバックエンドを作ったときの自分とメンバ用のメモ。
+メモなので当然読みにくい。これをブラッシュアップしてまともな文章にする予定だったが、
+その作業が遅れているので、一旦メモのまま公開する。内容について質問したい場合は
+Twitter https://twitter.com/ushitora_anqou[@ushitora_anqou]までリプライなどを貰えれば反応するかもしれない。
+
+この文章は、前に作ったRV32Kv1用LLVMバックエンドで得た知識を前提にして書かれている。
+RV32Kv1のメモは<<draft-rv32kv1.adoc>>を参照のこと。
+
+ソースコードはlink:https://github.com/virtualsecureplatform/llvm-rv16k[GitHub]にある。
+
+ブラッシュアップはlink:https://github.com/ushitora-anqou/write-your-llvm-backend[GitHub]にて行っている。
+
+このLLVMバックエンドの開発は、もともと2019年度未踏事業において
+link:https://github.com/virtualsecureplatform/kvsp[Virtual Secure Platform]を開発するために行われた。
+
+
+== 簡単使い方
+
+=== ビルドする
+
+とりあえずビルドする。ビルドには
+
+* `cmake`
+* `ninja`
+* `clang`
+* `clang++`
+* `make`
+* `lld`
+
+が必要。
+
+これらを入れた後 `cmake` を次のように走らせる。
+
+    $ cd /path/to/llvm-project
+    $ mkdir build
+    $ cd build
+    $ cmake -G Ninja \
+        -DLLVM_ENABLE_PROJECTS="clang;lld" \
+        -DCMAKE_BUILD_TYPE="Debug" \
+        -DBUILD_SHARED_LIBS=True \
+        -DLLVM_USE_SPLIT_DWARF=True \
+        -DLLVM_OPTIMIZED_TABLEGEN=True \
+        -DLLVM_BUILD_TESTS=True \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DLLVM_USE_LINKER=lld \
+        -DLLVM_TARGETS_TO_BUILD="" \
+        -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="RV16K" \
+        ../llvm
+    $ cmake --build .
+
+=== アセンブラを使う
+
+アセンブラを起動する。アセンブラは `build/bin/llvm-mc` である。
+
+....
+$ cat foo.s
+hoge:
+	li a0, 55
+	mov a1, a0
+	add a1, a0
+	j hoge
+
+$ bin/llvm-mc -arch=rv16k -filetype=obj foo.s | od -tx1z -Ax -v
+000000 7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00  >.ELF............<
+000010 01 00 f6 00 01 00 00 00 00 00 00 00 00 00 00 00  >................<
+000020 7c 00 00 00 00 00 00 00 34 00 00 00 00 00 28 00  >|.......4.....(.<
+000030 04 00 01 00 08 78 37 00 89 c0 89 e2 00 52 f6 ff  >.....x7......R..<
+000040 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000050 07 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00  >................<
+000060 00 2e 74 65 78 74 00 68 6f 67 65 00 2e 73 74 72  >..text.hoge..str<
+000070 74 61 62 00 2e 73 79 6d 74 61 62 00 00 00 00 00  >tab..symtab.....<
+000080 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000090 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+0000a0 00 00 00 00 0c 00 00 00 03 00 00 00 00 00 00 00  >................<
+0000b0 00 00 00 00 60 00 00 00 1c 00 00 00 00 00 00 00  >....`...........<
+0000c0 00 00 00 00 01 00 00 00 00 00 00 00 01 00 00 00  >................<
+0000d0 01 00 00 00 06 00 00 00 00 00 00 00 34 00 00 00  >............4...<
+0000e0 0c 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00  >................<
+0000f0 00 00 00 00 14 00 00 00 02 00 00 00 00 00 00 00  >................<
+000100 00 00 00 00 40 00 00 00 20 00 00 00 01 00 00 00  >....@... .......<
+000110 02 00 00 00 04 00 00 00 10 00 00 00              >............<
+00011c
+
+$ bin/llvm-mc -arch=rv16k -show-encoding foo.s
+	.text
+hoge:
+	li	a0, 55                  # encoding: [0x08,0x78,0x37,0x00]
+	mov	a1, a0                  # encoding: [0x89,0xc0]
+	add	a1, a0                  # encoding: [0x89,0xe2]
+	j	hoge                    # encoding: [0x00,0x52,A,A]
+                                        #   fixup A - offset: 2, value: hoge, kind: fixup_rv16k_pcrel_16bit
+
+$ bin/llvm-mc -filetype=obj -triple=rv16k foo.s | bin/llvm-objdump -d -
+
+<stdin>:	file format ELF32-rv16k
+
+Disassembly of section .text:
+0000000000000000 hoge:
+       0:	08 78 37 00 	li	a0, 55
+       4:	89 c0 	mov	a1, a0
+       6:	89 e2 	add	a1, a0
+       8:	00 52 f6 ff 	j	-10
+
+....
+
+=== コンパイラを起動する
+
+まずランタイムライブラリをビルドする必要がある。rv16k-rtレポジトリを `git clone` し
+`CC=/path/to/bin/clang` をつけて `make` する。
+
+....
+# rv16k-rt レポジトリをcloneする。
+$ git clone git@github.com:ushitora-anqou/rv16k-rt.git
+
+# rv16k-rt をビルドする。 CC 環境変数で、先程ビルドしたclangを指定する。
+$ cd rv16k-rt
+$ CC=/path/to/bin/clang make
+....
+
+
+以下のようなCプログラム `foo.c` を `clang` を用いてコンパイルする。
+コンパイル時に `--sysroot` オプションを用いて、先程ビルドしたrv16k-rtのディレクトリを指定する。
+なおバイナリサイズを小さくしたい場合は `-Oz` オプションを指定するなどすればよい。
+
+....
+$ cat foo.c
+int hoge;
+
+int main()
+{
+    hoge = 42;
+    return hoge;
+}
+
+$ bin/clang -target rv16k foo.c -o foo.exe --sysroot=/path/to/rv16k-rt
+....
+
+`llvm-readelf` を用いて `.text` その他のサイズが分かる。
+これがROMサイズ（ `0x200 = 512` ）未満であることを確認する。
+
+....
+$ bin/llvm-readelf -S foo.exe
+There are 7 section headers, starting at offset 0x10f0:
+
+Section Headers:
+  [Nr] Name              Type            Address  Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .text             PROGBITS        00000000 001000 00002e 00  AX  0   0  4
+  [ 2] .bss              NOBITS          00010000 00102e 000002 00  WA  0   0  2
+  [ 3] .comment          PROGBITS        00000000 00102e 000028 01  MS  0   0  1
+  [ 4] .symtab           SYMTAB          00000000 001058 000050 10      6   2  4
+  [ 5] .shstrtab         STRTAB          00000000 0010a8 00002f 00      0   0  1
+  [ 6] .strtab           STRTAB          00000000 0010d7 000018 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), l (large)
+  I (info), L (link order), G (group), T (TLS), E (exclude), x (unknown)
+  O (extra OS processing required) o (OS specific), p (processor specific)
+....
+
+`llvm-objdump` を用いて逆アセンブルを行うことができる。
+
+....
+$ bin/llvm-objdump -d foo.exe
+
+foo.exe:	file format ELF32-rv16k
+
+Disassembly of section .text:
+0000000000000000 _start:
+       0:	00 73 06 00 	jal	6
+       4:	00 52 fe ff 	j	-2
+
+0000000000000008 main:
+       8:	c1 f2 	addi	sp, -4
+       a:	21 80 	swsp	fp, 2(sp)
+       c:	12 e0 	mov	fp, sp
+       e:	42 f2 	addi	fp, 4
+      10:	08 78 00 00 	li	a0, 0
+      14:	82 92 fc ff 	sw	a0, -4(fp)
+      18:	08 78 00 00 	li	a0, 0
+      1c:	88 b2 00 00 	lw	a0, 0(a0)
+      20:	12 a0 	lwsp	fp, 2(sp)
+      22:	41 f2 	addi	sp, 4
+      24:	00 40 	jr	ra
+....
+
+`rv16k-sim` を使ってシミュレーションを行う。
+
+....
+$ ~/ano/secure_vm/rv16k-sim/main foo.exe 20
+ROM: 0000 0073
+ROM: 0002 0600
+ROM: 0004 0052
+ROM: 0006 FEFF
+ROM: 0008 C1F2
+ROM: 000A 2180
+ROM: 000C 12E0
+ROM: 000E 42F2
+ROM: 0010 0878
+ROM: 0012 0000
+ROM: 0014 8292
+ROM: 0016 FCFF
+ROM: 0018 0878
+ROM: 001A 0000
+ROM: 001C 88B2
+ROM: 001E 0000
+ROM: 0020 12A0
+ROM: 0022 41F2
+ROM: 0024 0040
+
+RAM: 0000 2A00
+
+Inst:JAL	PC <= 0x0002 Reg x0 <= 0x0004 PC <= 0x0008 FLAGS(SZCV) <= 0000
+Inst:ADDI	Reg x1 <= 0x01FA PC <= 0x000A FLAGS(SZCV) <= 0000
+Inst:SWSP	DataRam[0x01FC] <= 0x0000 DataRam[0x01FD] <= 0x0000 PC <= 0x000C FLAGS(SZCV) <= 0010
+Inst:MOV	Reg x2 <= 0x01FA PC <= 0x000E FLAGS(SZCV) <= 0000
+Inst:ADDI	Reg x2 <= 0x01FE PC <= 0x0010 FLAGS(SZCV) <= 0010
+Inst:LI	PC <= 0x0012 Reg x8 <= 0x0000 PC <= 0x0014 FLAGS(SZCV) <= 0100
+Inst:SW	PC <= 0x0016 DataRam[0x01FA] <= 0x0000 DataRam[0x01FB] <= 0x0000 PC <= 0x0018 FLAGS(SZCV) <= 0000
+Inst:LI	PC <= 0x001A Reg x8 <= 0x0000 PC <= 0x001C FLAGS(SZCV) <= 0100
+Inst:LW	PC <= 0x001E Reg x8 <= 0x002A PC <= 0x0020 FLAGS(SZCV) <= 0110
+Inst:LWSP	Reg x2 <= 0x0000 PC <= 0x0022 FLAGS(SZCV) <= 0010
+Inst:ADDI	Reg x1 <= 0x01FE PC <= 0x0024 FLAGS(SZCV) <= 0010
+Inst:JR	PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J	PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+x0=4	x1=510	x2=0	x3=0	x4=0	x5=0	x6=0	x7=0	x8=42	x9=0	x10=0	x11=0	x12=0	x13=0	x14=0	x15=0
+....
+
+`x8=42` とあるので、正しく実行されていることが分かる。
+
+== 概要
+
+これを読めば自作アーキテクチャ（RV16Kv2）の機械語を出力するLLVMバックエンドを作成することができる。
+VSP開発のバス係数を高める意義がある。
+
+この文書はAsciiDocを用いて記述されている。
+記述方法についてはリファレンス<<asciidoctor_user-manual>><<asciidoctor-quickref>>を参照のこと。
+
+== ところで
+
+一度もコンパイラを書いたことがない人は、この文書を読む前に
+『低レイヤを知りたい人のためのCコンパイラ作成入門』<<rui-compilerbook>>などで一度
+フルスクラッチからコンパイラを書くことをおすすめします。
+
+また<<krister-writing_gcc_backend>>などを参考に、
+LLVMではなくGCCにバックエンドを追加することも検討してみてはいかがでしょうか。
+意外とGCCのほうが楽かもしれませんよ？
+
+== 参考にすべき資料
+
+=== Webページ
+
+* Writing an LLVM Backend<<llvm-writing_backend>>
+** 分かりにくく読みにくい。正直あんまり見ていないが、たまに眺めると有益な情報を見つけたりもする。
+* The LLVM Target-Independent Code Generator<<llvm-code_generator>>
+** <<llvm-writing_backend>>よりもよほど参考になる。LLVMバックエンドがどのようにLLVM IRをアセンブリに落とすかが明記されている。必読。
+* TableGenのLLVMのドキュメント<<llvm-tablegen>>
+** 情報量が少ない。これを読むよりも各種バックエンドのTableGenファイルを読むほうが良い。
+* LLVM Language Reference Manual<<llvm-langref>>
+** LLVM IRについての言語リファレンス。LLVM IRの仕様などを参照できる。必要に応じて読む。
+* Architecture & Platform Information for Compiler Writers<<llvm-compilerwriterinfo>>
+** LLVMで公式に実装されているバックエンドに関するISAの情報が集約されている。Lanaiの言語仕様へのリンクが貴重。
+* RISC-V support for LLVM projects<<github_riscv-llvm>>
+** **どちゃくそに参考になる**。以下の開発はこれに基づいて行う。
+** LLVMにRISC-Vサポートを追加するパッチ群。バックエンドを開発するためのチュートリアルも兼ねているらしく `docs/` 及びそれと対応したpatchが参考になる。
+** またこれについて、開発者が2018 LLVM Developers' Meetingで登壇したときの動画は<<youtube_llvm-backend-development-by-example>>より閲覧できる。スライドは<<speakerdeck-llvm_backend_development>>より閲覧できる。
+** そのときのCoding Labは<<lowrisc-devmtg18>>より閲覧できる。
+* Create an LLVM Backend for the Cpu0 Architecture<<cpu0>>
+** Cpu0という独自アーキテクチャのLLVMバックエンドを作成するチュートリアル。多少古いが、内容が網羅的で参考になる。英語が怪しい。
+* FPGA開発日記<<fpga_develop_diary>>
+** Cpu0の資料<<cpu0>>をもとに1からRISC-Vバックエンドを作成する過程がブログエントリとして公開されている。GitHubに実装も公開されている<<fpga_develop_diary-llvm>>。
+* ELVMバックエンド<<elvm-llvm_backend>>
+** 限られた命令でLLVM IRの機能を達成する例として貴重。でも意外とISAはリッチだったりする。
+** 作成者のスライドも参考になる<<elvm-slide>>。
+* 2018年度東大CPU実験で開発されたLLVM Backend<<todai_llvm_backend>>
+** これについて書かれたAdCのエントリもある<<todai_llvm_backend-article>>。
+* Tutorial: Building a backend in 24 hours<<llvm-anton_korobeynikov_2012>>
+** LLVMバックエンドの大まかな動きについてざっとまとめたあと、 `ret` だけが定義された最低限のLLVMバックエンド ("stub backend") を構成している。
+** Instruction Selection の説明にある *Does bunch of magic and crazy pattern-matching* が好き。
+* 2017 LLVM Developers’ Meeting: M. Braun "Welcome to the back-end: The LLVM machine representation"<<llvm-welcome_to_the_back_end_2017>>
+** スライドも公開されている<<welcome_to_the_back_end-slides>>。
+** 命令選択が終わったあとの中間表現であるLLVM MIR
+（ `MachineFunction` や `MachineInstr` など）や、それに対する操作の解説。
+RegStateやframe index・register scavengerなどの説明が貴重。
+* Howto: Implementing LLVM Integrated Assembler<<ean10-howto-llvmas>>
+** LLVM上でアセンブラを書くためのチュートリアル。アセンブラ単体に焦点を絞ったものは珍しい。
+* Building an LLVM Backend<<LLVMBackend_2015_03_26_v2>>
+** 対応するレポジトリが<<github-frasercrmck_llvm_leg>>にある。
+* [LLVMdev] backend documentation<<llvm_dev_ml-059799>>
+** llvm-devメーリングリストのバックエンドのよいドキュメントは無いかというスレッド。Cpu0とTriCoreが挙げられているが、深くまで記述したものは無いという回答。
+* TriCore Backend<<tricore-llvm>>
+** TriCoreというアーキテクチャ用のバックエンドを書いたという論文。スライドもある<<tricore-llvm-slides>>。ソースコードもGitHub上に上がっているが、どれが公式かわからないfootnote:[論文とスライドも怪しいものだが、著者が一致しているので多分正しいだろう。]。
+* Life of an instruction in LLVM<<life_of_an_instruction>>
+** Cコードからassemblyまでの流れを概観。
+* LLVM Backendの紹介<<llvm_backend_intro>>
+** 「コンパイラ勉強会」footnote:[これとは別の発表で「コンパイラ開発してない人生はFAKE」という名言が飛び出した勉強会<<compiler_study_report>>。]での、LLVMバックエンドの大きな流れ（特に命令選択）について概観した日本語スライド。
+
+=== 書籍
+
+* 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』<<fox-llvm>>
+** 数少ない日本語資料。Passやバックエンドの各クラスについて説明している。<<llvm-code_generator>>と合わせて大まかな流れを掴むのに良い。
+
+なおLLVMについてGoogleで検索していると"LLVM Cookbook"なる謎の書籍（の電子コピー）が
+見つかるが、内容はLLVM公式文書のパクリのようだ<<amazon-llvm_cookbook-customer_review>>。
+
+=== バックエンド
+
+* RISC-V<<riscv>>
+** パッチ群が開発ドキュメントとともに公開されている<<github_riscv-llvm>>。移行の開発はこれをベースに行う。
+* Lanai<<lanai-isa>>
+** Googleが開発した32bit RISCの謎アーキテクチャ。全く実用されていないが、バックエンドが単純に設計されておりコメントも豊富のためかなり参考になるfootnote:[LLVMバックエンドの開発を円滑にするためのアーキテクチャなのではと思うほどに分かりやすい。]。footnote:[後のSparcについて<<llvm_dev_ml-059799>>
+にて指摘されているように、商業的に成功しなかったアーキテクチャほどコードが単純で分かりやすい。]
+* Sparc
+** <<llvm-writing_backend>>でも説明に使われており、コメントが豊富。
+* x86
+** みんな大好きx86。貴重なCISCの資料であり、かつ2オペランド方式を採用する場合に貴重な実装例を与えてくれる。あと `EFLAGS` の取り回しなども参考になるが、全体的にコードは読みにくい。ただLLVMの命名規則には従うため、他のバックエンドからある程度推論をして読むのが良い。
+
+== RV16Kv2アーキテクチャ仕様
+
+https://docs.google.com/spreadsheets/d/1Q9JPoZLVyqJEC3p_LBYiPLMTjGZgVoNlu-Jx3CFrLNQ/edit?usp=sharing
+
+== LLVMをテストする
+
+`llvm-lit` を使用してLLVMをテストできる。
+
+....
+$ bin/llvm-lit test -s  # 全てのテストを実行する
+$ bin/llvm-lit -s --filter 'RV16K' test # RV16Kを含むテストを実行する
+$ bin/llvm-lit -as --filter 'RV16K' test # テスト結果を詳細に表示する
+$ bin/llvm-lit -as --filter 'RV16K' --debug test # デバッグ情報を表示する
+....
+
+== LLVMバックエンドの流れ
+
+`RV16K*` はオーバーライドできるメンバ関数を表す。
+
+....
+
+LLVM IR code
+
+|
+|
+v
+
+SelectionDAG (SDNode); RV16Kで扱えない型・操作を含む (not legal)。
+
+|
+|  <-- RV16KTargetLowering::RV16KTargetLowering
+|  <-- RV16KTargetLowering::Lower*
+v
+
+SelectionDAG (SDNode); RV16Kで扱える型・操作のみを含む (legal)。
+
+|
+|  <-- RV16KDAGToDAGISel, RV16KInstrInfo
+v
+
+SelectionDAG (MachineSDNode); ノードの命令は全てRV16Kのもの。
+
+|
+|  <-- RV16KInstrInfo; 命令スケジューリング
+v
+
+LLVM MIR (MachineInstr); スケジューリングされた命令列
+
+|  (以下の流れは TargetPassConfig::addMachinePasses に記述されている)
+|
+|  <-- RV16KTargetLowering::EmitInstrWithCustomInserter;
+|          usesCustomInserter フラグが立っている ある MachineInstr の代わりに
+|          複数の MachineInstr を挿入したり MachineBasicBlock を追加したりする。
+|
+|  <-- SSA上での最適化
+|
+|  <-- レジスタ割り付け
+v
+
+LLVM MIR (MachineInstr); 物理レジスタのみを含む命令列（仮想レジスタを含まない）
+
+|
+|  <-- RV16KInstrInfo::expandPostRAPseudo
+|
+|  <-- RV16KFrameLowering::processFunctionBeforeFrameFinalized
+|
+|  <-- スタックサイズの確定
+|
+|  <-- RV16KFrameLowering::emitPrologue; 関数プロローグの挿入
+|  <-- RV16KFrameLowering::emitEpilogue; 関数エピローグの挿入
+|  <-- RV16KRegisterInfo::eliminateFrameIndex; frame indexの消去
+|
+|  <-- llvm::scavengeFrameVirtualRegs;
+|          frame lowering中に必要になった仮想レジスタをscavengeする
+v
+
+LLVM MIR (MachineInstr); frame index が削除された命令列
+
+|
+|  <-- RV16KPassConfig::addPreEmitPass
+|  <-- RV16KPassConfig::addPreEmitPass2
+|
+|
+|  <-- RV16KAsmPrinter
+|  <-- PseudoInstExpansion により指定された擬似命令展開の実行
+v
+
+MC (MCInst); アセンブリと等価な中間表現
+....
+
+LLVM MIRについては<<llvm-welcome_to_the_back_end_2017>>に詳しい。
+各フェーズでの `MachineInstr` をデバッグ出力させる場合は `llc` に `-print-machineinstrs` を
+渡せば良い。
+
+== LLVMのソースコードを用意する
+
+LLVMのソースコードを取得する。今回の開発ではv8.0.0をベースとする。
+Git上でrv16kブランチを作り、その上で開発する。
+
+....
+$ git clone https://github.com/llvm/llvm-project.git
+$ cd llvm-project
+$ git checkout llvmorg-8.0.0
+$ git checkout -b rv16k
+....
+
+== スケルトンバックエンドを追加する
+
+=== RV16KをTripleに追加する
+
+RV16Kは名実ともに16bitアーキテクチャなので、RV32Kとの変更点がままある。
+RISC Vは32bitか64bitで参考にならないので、例えばavrなどを参考にすると次のようになる。
+
+....
+  T.setArch(Triple::rv16k);
+  EXPECT_TRUE(T.isArch16Bit());
+  EXPECT_FALSE(T.isArch32Bit());
+  EXPECT_FALSE(T.isArch64Bit());
+....
+
+ちなみにavrは**8bit**アーキテクチャだが、8bitを引数に取る命令をLLVMがうまく扱えないらしく
+C\++コードを大量に書いてよしなにしているらしい<<llvm-ml-129089>>。
+
+ところでRV32Kは32bitアーキテクチャとして登録していたが、一方で
+`get32BitArchVariant` で `UnknownArch` を返しており、ねじれていたのだと分かる。
+結局の所このあたりは32bit/64bitで一部同じ命令を使うとか、ユーザーインターフェースの部分とかで
+関係する話のようで、とりあえず開発を行う分にはあまり関係なさそうだ。
+
+=== RV16KのELF定義を追加する
+
+`RV16K.def` でリロケーションの情報を記載できる。
+
+`ELFObjectFile.h` では `ELF32` としておく。AVRもこうなっている。
+多分名前だけの問題だと思う。
+
+`elf-flags.yaml` は作らない。
+
+=== バックエンドを追加する
+
+Apache 2.0 Licenseを明記。
+
+Data Layoutの文字列を正確に指定する必要がある。詳細はLLVM IRの言語仕様<<llvm-langref-datalayout>>
+に載っている。 `P` を指定してやることでハーバード・アーキテクチャの場合のプログラムメモリ（ROM）
+の位置を指定できるようだ。
+
+ビルドする。
+
+....
+$ cmake -G Ninja \
+    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+    -DCMAKE_BUILD_TYPE="Debug" \
+    -DBUILD_SHARED_LIBS=True \
+    -DLLVM_USE_SPLIT_DWARF=True \
+    -DLLVM_OPTIMIZED_TABLEGEN=True \
+    -DLLVM_BUILD_TESTS=True \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLLVM_USE_LINKER=lld \
+    -DLLVM_TARGETS_TO_BUILD="X86" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="RISCV;RV16K" \
+    ../llvm
+$ cmake --build .
+....
+
+大量のオプションはビルドを早くするためのものである<<llvm_dev_ml-106187>>。
+
+RV16Kバックエンドが追加された。
+
+....
+$ bin/llc --version
+LLVM (http://llvm.org/):
+  LLVM version 8.0.0
+  DEBUG build with assertions.
+  Default target: x86_64-unknown-linux-gnu
+  Host CPU: skylake
+
+  Registered Targets:
+    riscv32 - 32-bit RISC-V
+    riscv64 - 64-bit RISC-V
+    rv16k   - RV16K
+    x86     - 32-bit X86: Pentium-Pro and above
+    x86-64  - 64-bit X86: EM64T and AMD64
+....
+
+== 簡易的なアセンブラを実装する
+
+=== TableGenファイルを追加する
+
+`llvm/include/llvm/Target/Target.td` に 主なclassが定義されているので、
+overrideしたいフィールドなどは、コメントなどを見ながらここで確認する。
+
+....
+//===----------------------------------------------------------------------===//
+// Instruction set description - These classes correspond to the C++ classes in
+// the Target/TargetInstrInfo.h file.
+//
+class Instruction {
+  string Namespace = "";
+
+  dag OutOperandList;       // An dag containing the MI def operand list.
+  dag InOperandList;        // An dag containing the MI use operand list.
+  string AsmString = "";    // The .s format to print the instruction with.
+
+  // Pattern - Set to the DAG pattern for this instruction, if we know of one,
+  // otherwise, uninitialized.
+  list<dag> Pattern;
+
+  // The follow state will eventually be inferred automatically from the
+  // instruction pattern.
+
+  list<Register> Uses = []; // Default to using no non-operand registers
+  list<Register> Defs = []; // Default to modifying no non-operand registers
+
+  // Predicates - List of predicates which will be turned into isel matching
+  // code.
+  list<Predicate> Predicates = [];
+
+  // Size - Size of encoded instruction, or zero if the size cannot be determined
+  // from the opcode.
+  int Size = 0;
+
+  // DecoderNamespace - The "namespace" in which this instruction exists, on
+  // targets like ARM which multiple ISA namespaces exist.
+  string DecoderNamespace = "";
+
+  // Code size, for instruction selection.
+  // FIXME: What does this actually mean?
+  int CodeSize = 0;
+
+  // Added complexity passed onto matching pattern.
+  int AddedComplexity  = 0;
+
+  // These bits capture information about the high-level semantics of the
+  // instruction.
+  bit isReturn     = 0;     // Is this instruction a return instruction?
+  bit isBranch     = 0;     // Is this instruction a branch instruction?
+  bit isEHScopeReturn = 0;  // Does this instruction end an EH scope?
+  bit isIndirectBranch = 0; // Is this instruction an indirect branch?
+  bit isCompare    = 0;     // Is this instruction a comparison instruction?
+  bit isMoveImm    = 0;     // Is this instruction a move immediate instruction?
+  bit isMoveReg    = 0;     // Is this instruction a move register instruction?
+  bit isBitcast    = 0;     // Is this instruction a bitcast instruction?
+  bit isSelect     = 0;     // Is this instruction a select instruction?
+  bit isBarrier    = 0;     // Can control flow fall through this instruction?
+  bit isCall       = 0;     // Is this instruction a call instruction?
+  bit isAdd        = 0;     // Is this instruction an add instruction?
+  bit isTrap       = 0;     // Is this instruction a trap instruction?
+  bit canFoldAsLoad = 0;    // Can this be folded as a simple memory operand?
+  bit mayLoad      = ?;     // Is it possible for this inst to read memory?
+  bit mayStore     = ?;     // Is it possible for this inst to write memory?
+  bit isConvertibleToThreeAddress = 0;  // Can this 2-addr instruction promote?
+  bit isCommutable = 0;     // Is this 3 operand instruction commutable?
+  bit isTerminator = 0;     // Is this part of the terminator for a basic block?
+  bit isReMaterializable = 0; // Is this instruction re-materializable?
+  bit isPredicable = 0;     // Is this instruction predicable?
+  bit hasDelaySlot = 0;     // Does this instruction have an delay slot?
+  bit usesCustomInserter = 0; // Pseudo instr needing special help.
+  bit hasPostISelHook = 0;  // To be *adjusted* after isel by target hook.
+  bit hasCtrlDep   = 0;     // Does this instruction r/w ctrl-flow chains?
+  bit isNotDuplicable = 0;  // Is it unsafe to duplicate this instruction?
+  bit isConvergent = 0;     // Is this instruction convergent?
+  bit isAsCheapAsAMove = 0; // As cheap (or cheaper) than a move instruction.
+  bit hasExtraSrcRegAllocReq = 0; // Sources have special regalloc requirement?
+  bit hasExtraDefRegAllocReq = 0; // Defs have special regalloc requirement?
+  bit isRegSequence = 0;    // Is this instruction a kind of reg sequence?
+                            // If so, make sure to override
+                            // TargetInstrInfo::getRegSequenceLikeInputs.
+  bit isPseudo     = 0;     // Is this instruction a pseudo-instruction?
+                            // If so, won't have encoding information for
+                            // the [MC]CodeEmitter stuff.
+  bit isExtractSubreg = 0;  // Is this instruction a kind of extract subreg?
+                             // If so, make sure to override
+                             // TargetInstrInfo::getExtractSubregLikeInputs.
+  bit isInsertSubreg = 0;   // Is this instruction a kind of insert subreg?
+                            // If so, make sure to override
+                            // TargetInstrInfo::getInsertSubregLikeInputs.
+  bit variadicOpsAreDefs = 0; // Are variadic operands definitions?
+
+  // Does the instruction have side effects that are not captured by any
+  // operands of the instruction or other flags?
+  bit hasSideEffects = ?;
+
+  // Is this instruction a "real" instruction (with a distinct machine
+  // encoding), or is it a pseudo instruction used for codegen modeling
+  // purposes.
+  // FIXME: For now this is distinct from isPseudo, above, as code-gen-only
+  // instructions can (and often do) still have encoding information
+  // associated with them. Once we've migrated all of them over to true
+  // pseudo-instructions that are lowered to real instructions prior to
+  // the printer/emitter, we can remove this attribute and just use isPseudo.
+  //
+  // The intended use is:
+  // isPseudo: Does not have encoding information and should be expanded,
+  //   at the latest, during lowering to MCInst.
+  //
+  // isCodeGenOnly: Does have encoding information and can go through to the
+  //   CodeEmitter unchanged, but duplicates a canonical instruction
+  //   definition's encoding and should be ignored when constructing the
+  //   assembler match tables.
+  bit isCodeGenOnly = 0;
+
+  // Is this instruction a pseudo instruction for use by the assembler parser.
+  bit isAsmParserOnly = 0;
+
+  // This instruction is not expected to be queried for scheduling latencies
+  // and therefore needs no scheduling information even for a complete
+  // scheduling model.
+  bit hasNoSchedulingInfo = 0;
+
+  InstrItinClass Itinerary = NoItinerary;// Execution steps used for scheduling.
+
+  // Scheduling information from TargetSchedule.td.
+  list<SchedReadWrite> SchedRW;
+
+  string Constraints = "";  // OperandConstraint, e.g. $src = $dst.
+
+  /// DisableEncoding - List of operand names (e.g. "$op1,$op2") that should not
+  /// be encoded into the output machineinstr.
+  string DisableEncoding = "";
+
+  string PostEncoderMethod = "";
+  string DecoderMethod = "";
+
+  // Is the instruction decoder method able to completely determine if the
+  // given instruction is valid or not. If the TableGen definition of the
+  // instruction specifies bitpattern A??B where A and B are static bits, the
+  // hasCompleteDecoder flag says whether the decoder method fully handles the
+  // ?? space, i.e. if it is a final arbiter for the instruction validity.
+  // If not then the decoder attempts to continue decoding when the decoder
+  // method fails.
+  //
+  // This allows to handle situations where the encoding is not fully
+  // orthogonal. Example:
+  // * InstA with bitpattern 0b0000????,
+  // * InstB with bitpattern 0b000000?? but the associated decoder method
+  //   DecodeInstB() returns Fail when ?? is 0b00 or 0b11.
+  //
+  // The decoder tries to decode a bitpattern that matches both InstA and
+  // InstB bitpatterns first as InstB (because it is the most specific
+  // encoding). In the default case (hasCompleteDecoder = 1), when
+  // DecodeInstB() returns Fail the bitpattern gets rejected. By setting
+  // hasCompleteDecoder = 0 in InstB, the decoder is informed that
+  // DecodeInstB() is not able to determine if all possible values of ?? are
+  // valid or not. If DecodeInstB() returns Fail the decoder will attempt to
+  // decode the bitpattern as InstA too.
+  bit hasCompleteDecoder = 1;
+
+  /// Target-specific flags. This becomes the TSFlags field in TargetInstrDesc.
+  bits<64> TSFlags = 0;
+
+  ///@name Assembler Parser Support
+  ///@{
+
+  string AsmMatchConverter = "";
+
+  /// TwoOperandAliasConstraint - Enable TableGen to auto-generate a
+  /// two-operand matcher inst-alias for a three operand instruction.
+  /// For example, the arm instruction "add r3, r3, r5" can be written
+  /// as "add r3, r5". The constraint is of the same form as a tied-operand
+  /// constraint. For example, "$Rn = $Rd".
+  string TwoOperandAliasConstraint = "";
+
+  /// Assembler variant name to use for this instruction. If specified then
+  /// instruction will be presented only in MatchTable for this variant. If
+  /// not specified then assembler variants will be determined based on
+  /// AsmString
+  string AsmVariantName = "";
+
+  ///@}
+
+  /// UseNamedOperandTable - If set, the operand indices of this instruction
+  /// can be queried via the getNamedOperandIdx() function which is generated
+  /// by TableGen.
+  bit UseNamedOperandTable = 0;
+
+  /// Should FastISel ignore this instruction. For certain ISAs, they have
+  /// instructions which map to the same ISD Opcode, value type operands and
+  /// instruction selection predicates. FastISel cannot handle such cases, but
+  /// SelectionDAG can.
+  bit FastISelShouldIgnore = 0;
+}
+....
+
+RISC Vがx0〜x7について `CostPerUse` を `1` に設定しているのは、
+圧縮命令セット（RV32C）の命令のオペランドにも使えるレジスタを優先的に使ってほしいかららしい。
+この設定はRV32Cが有効になっていないとき（ `llvm-mc` に `-mattr=c` を渡さないとき）にも
+反映されるが、とくに不都合はないようだ。
+
+`field bits<16> Inst` はどこからも参照されていないが、なぜか命令のエンコードとしてはたらく。
+ハードコードされているようだ（TODO　未確認）。 `Inst` を使う場合は
+`MCCodeEmitter::encodeInstrution` で `getBinaryCodeForInstr` を呼ぶだけでエンコードが原則完了する。
+一方使わない場合（x86など）は自前でコード生成を行う必要があるようだ。
+
+`field` がついている場合といない場合の違いは良くわからない（TODO）が、
+フィールドであることを明示する以上の意味はなさそうだ。
+
+TableGenファイルを書いた後はそれが正しいかテストをしておく。
+
+....
+$ bin/llvm-tblgen -I ../llvm/lib/Target/RV16K/ -I ../llvm/include/ -I ../llvm/lib/Target/ ../llvm/lib/Target/RV16K/RV16K.td
+....
+
+またTableGenが仕事をするように `CMakeLists.txt` を書き換えておく。
+
+=== RV16K用の `MCTargetDesc` を追加する
+
+`createRV16KMCRegisterInfo` 内で呼び出す `InitRV16KMCRegisterInfo` はTableGenが生成する関数で、
+内部で `llvm::MCRegisterInfo::InitMCRegisterInfo` <<llvm_doxygen-InitMCRegisterInfo>>
+を呼び出している。したがって第一引数に `MCRegisterInfo *` をとり、
+第二引数はreturn addressが入っているレジスタ（RV16Kv2では `x0` ）を渡せば良いfootnote:[
+ちなみにreturn addressをスタックに積むx86では `eip` を（x86_64では `rip` を）返している。
+なぜかは良くわからない。TODO]。また第五引数にはPCを表すレジスタを渡すことができるが、
+指定しなければ `0` が渡される。レジスタ番号 `0` は無指定であることを意味するようだ（未確認；TODO）。
+
+`RV16KMCCodeEmitter::encodeInstruction` では
+
+....
+const MCInstrDesc &Desc = MCII.get(MI.getOpcode());
+unsigned Size = Desc.getSize();
+....
+
+とすることで、命令の大きさを取得できる。ここで `getOpcode` で得られる値は
+TableGenのフィールドとして指定する `Opcode` ではなく、LLVMが自動的につける通し番号が返ってくる
+（多分。どこかにそう書いてあった気がするが見つけられない。；TODO）。
+
+buildしようとするとTableGenがSegmentation falutで落ちた。どうやらCodeEmitter用の
+ファイル生成に失敗しているらしい。原因は `NOP` の `rs` と `rd` に `0` を入れ忘れていたことだった。
+
+そうこうしていると命令を限った簡易的なアセンブラができる。
+
+....
+$ cat foo.s
+mov x2, x1
+add x2, x1
+sub x2, x1
+and x2, x1
+or  x2, x1
+xor x2, x1
+lsl x2, x1
+lsr x2, x1
+asr x2, x1
+cmp x2, x1
+li x1, 0x7fff
+li x1, -0x8000
+addi x1, 7
+addi x1, -8
+cmpi x1, 7
+cmpi x1, -8
+nop
+
+$ bin/llvm-mc -arch=rv16k -filetype=obj foo.s | od -tx1z -Ax -v
+000000 7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00  >.ELF............<
+000010 01 00 f6 00 01 00 00 00 00 00 00 00 00 00 00 00  >................<
+000020 84 00 00 00 00 00 00 00 34 00 00 00 00 00 28 00  >........4.....(.<
+000030 04 00 01 00 12 c0 12 e2 12 e3 12 e4 12 e5 12 e6  >................<
+000040 12 ea 12 ea 12 ed 12 c3 01 78 ff 7f 01 78 00 80  >.........x...x..<
+000050 71 f2 81 f2 71 d3 81 d3 00 00 00 00 00 00 00 00  >q...q...........<
+000060 00 00 00 00 00 00 00 00 00 00 00 00 00 2e 74 65  >..............te<
+000070 78 74 00 2e 73 74 72 74 61 62 00 2e 73 79 6d 74  >xt..strtab..symt<
+000080 61 62 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >ab..............<
+000090 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+0000a0 00 00 00 00 00 00 00 00 00 00 00 00 07 00 00 00  >................<
+0000b0 03 00 00 00 00 00 00 00 00 00 00 00 6c 00 00 00  >............l...<
+0000c0 17 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00  >................<
+0000d0 00 00 00 00 01 00 00 00 01 00 00 00 06 00 00 00  >................<
+0000e0 00 00 00 00 34 00 00 00 26 00 00 00 00 00 00 00  >....4...&.......<
+0000f0 00 00 00 00 04 00 00 00 00 00 00 00 0f 00 00 00  >................<
+000100 02 00 00 00 00 00 00 00 00 00 00 00 5c 00 00 00  >............\...<
+000110 10 00 00 00 01 00 00 00 01 00 00 00 04 00 00 00  >................<
+000120 10 00 00 00                                      >....<
+000124
+....
+
+== 簡易アセンブラのテストを書く
+
+=== `RV16KInstPrinter` を実装する
+
+`AltNames` でアセンブリに出力させる場合、 `AltNames` が指定されていないレジスタが
+あるとエラーが出る。そこで `FLAGS` にもダミーの `AltNames` を与えた。
+
+....
+def FLAGS : RV16KReg<0, "flags", ["flags"]>;
+....
+
+次のように `-show-encoding` オプションが動くようになった。
+
+....
+$ bin/llvm-mc -arch=rv16k -show-encoding foo.s
+    .text
+    mov     fp, sp                  # encoding: [0x12,0xc0]
+    add     fp, sp                  # encoding: [0x12,0xe2]
+    sub     fp, sp                  # encoding: [0x12,0xe3]
+    and     fp, sp                  # encoding: [0x12,0xe4]
+    or      fp, sp                  # encoding: [0x12,0xe5]
+    xor     fp, sp                  # encoding: [0x12,0xe6]
+    lsl     fp, sp                  # encoding: [0x12,0xea]
+    lsr     fp, sp                  # encoding: [0x12,0xea]
+    asr     fp, sp                  # encoding: [0x12,0xed]
+    cmp     fp, sp                  # encoding: [0x12,0xc3]
+    li      sp, 32767               # encoding: [0x01,0x78,0xff,0x7f]
+    li      sp, -32768              # encoding: [0x01,0x78,0x00,0x80]
+    addi    sp, 7                   # encoding: [0x71,0xf2]
+    addi    sp, -8                  # encoding: [0x81,0xf2]
+    cmpi    sp, 7                   # encoding: [0x71,0xd3]
+    cmpi    sp, -8                  # encoding: [0x81,0xd3]
+    nop                             # encoding: [0x00,0x00]
+....
+
+=== テストを書く
+
+すべての命令を網羅するようにテストを書く。
+
+== アセンブラに残りの命令を追加する
+
+=== `lw/lbu/lb/sw/sb` 命令を追加する
+
+TableGenにエントリを増やし、またオペランドにメモリ表記をとれるように
+`AsmParser` を変更すれば良い。この時点では `getImmOpValue` を実装する必要はない。
+
+ここで `li x11, x12` を入力すると、期待しているエラーメッセージ
+`invalid operand for instruction` ではなく
+`immediate must be an integer in the range [-32768, 32767]` が出てしまう。
+これはアセンブリをパーズするときに使用する関数 `RV16KAsmParser::MatchAndEmitInstruction` 内で
+呼んでいる、TableGenが生成する `MatchInstructionImpl` の挙動のためである。
+すなわち `MatchInstructionImpl` が呼ぶ `validateOperandClass` では、例えば符号付き16bit即値を
+期待しているときにi) まず `isSImm16` を用いて即値として正しいかを調べii)
+正しければ `Match_Success` を返しiii)
+正しくなければ `Match_InvalidSImm16` を返している。そしてiv) これが `MatchAndEmitInstruction` で
+補足されて、即値幅のエラーとして表示される。すなわち「そもそもオペランドが即値か」という
+条件分岐が行われていないことが、この挙動の原因である。
+そこで `MatchInstructionImpl` から即値エラーが返ってきた場合には
+「そもそもオペランドが即値か」を次のように判定し、即値でない場合に `invalid operand` エラーを
+返すことで、この問題を解決できる。
+
+....
+RV16KOperand &Operand = (RV16KOperand &)*Operands[ErrorInfo];
+if (!Operand.isImm())
+  return Error(Operand.getStartLoc(), "invalid operand for instruction");
+....
+
+=== `lwsp/swsp` 命令を追加する
+
+やるだけ。
+
+=== `j/jal/jalr/jr/jl/jle/je/jne/jb/jbe` 命令を追加する
+
+やるだけ。先達はあらまほしきことなり。
+
+=== 属性を指定する
+
+`llvm/include/llvm/Target/Target.td` を参考に、必要なフィールドを `let` を使って上書きする。
+
+どの程度の粒度で設定すべきなのか良くわからない。例えば `isAdd` というフラグがあるが、
+誰も使っていない。また `isCommutable` はx86やLanaiは使っているが、RISC Vは使っていない。
+おそらくTableGenが推論してくれる部分などがあるのだろうが、どれを指定してどれを指定するべきでないのか
+全然わからない。
+
+x86を見るとmov命令には `Defs = [EFLAGS]` の記載がない。Intel SDMを見ると、
+実はx86のMOVやJccはEFLAGSを書き換えないことが分かる。意外だ。
+
+とりあえず分かる範囲で設定して先に進む。不都合が起きたら戻ってこよう。
+
+== ディスアセンブラを実装する
+
+途中でバグらせてつらかったが、LLVM流printfデバッグの方法が分かった。
+`LLVM_DEBUG(dbgs() << "message");` とすることでデバッグ情報を出力できる。
+`message` の部分に変数などを仕込みたい場合は `formatv` を使うのが安全である。
+このようにして出力したデバッグ情報は、ツールの
+コマンドライン引数に `-debug` を渡すことで見ることができる。
+例えばディスアセンブラの挙動についてデバッグしたい場合は、まず情報を表示するように仕込み
+
+....
+LLVM_DEBUG(dbgs() << formatv("HOGEHOGE {0} {1} {2} {3}\n", bit15, bit14,
+                             bit12, isNIAI));
+....
+
+つぎにそれを表示させる。
+
+....
+$ bin/llvm-mc -filetype=obj -triple=rv16k < foo.s | bin/llvm-objdump -debug -d -
+....
+
+なおこのあたりの技法についてはLLVM Programmer's Manual<<llvm-programmers_manual>>が詳しい。
+
+== relocationとfixupに対応する
+
+=== Fixupを定義する
+
+`j` や `jal` のために `fixup_rv16k_pcrel_16bit` を、 `jl` や `jle` のために `fixup_rv16k_pcrel_8bit` を
+定義した。なおグローバル変数などのリロケーションに必要なfixupは `FK_Data_2` を使えば良いようだ。
+
+=== Fixupを適用する関数を定義する
+
+やるだけ。RV32Kと比べて即値の埋め込み方が簡単なため、これ自体はそれほど難しくない。
+
+=== アセンブラにFixupを生成させる
+
+Fixupは `RV16KMCCodeEmitter::getImmOpValue` が即値の `EncoderMethod` として呼ばれることにより
+生成される。すなわち `getImmOpValue` の中で、当該オペランドの値が `MCSymbolRefExpr` の場合には
+Fixupを生成するようにすればよい。また `isSImm16Lsb0` などは `MCSymbolRefExpr` に対して `true`
+を返すようにしておくfootnote:[このあたり、即値とは `MCExpr` である、というデータ構造が効いている。]。
+
+またそもそもアセンブリをパーズするときに文字列が `MCSymbolRefExpr` として読み込まれるように、
+`AsmParser` を変更する必要がある。
+そこで `RV16KAsmParser::parseImmediate` を変更する。
+
+作り終わったらFixupのテストを書く。RV16Kv2仕様の詰めが甘かったので若干修正した。
+
+=== Relocationに対応する
+
+最後まで修正できずに残ったFixupをRelocationに変換してELFに埋め込み、
+リンカに解決させるようにする。 `RV16KELFObjectWriter::getRelocType` にFixupとRelocationの
+対応を書けば良いが、そのまえにどのようなRelocationが存在するかについて
+`include/llvm/BinaryFormat/ELFRelocs/RISCV.def` に記述する必要がある。
+
+`.int foo` として `li x2, foo` とすると `FK_Data_4` が生成されてしまう。
+解決策を探して他のターゲットの `RV16KELFObjectWriter.cpp` を見たが、
+どれも `FK_Data_4` を捕捉し処理していた。とりあえず `.2byte foo` とすることで回避する。
+
+`llvm-readobj` でできたELFバイナリを見ると `AddressSize` が `32bit` となっているが、
+変え方がわからない。と思ったが、どうやらELFバイナリそのものが32bit/64bit限定のようだ。
+
+全体的にLLVMは32bit以上を念頭において開発されているように思う。
+
+=== 即値に定数式を書けるようにする
+
+すなわち `.2byte foo` があったときに `li x3, foo+3` などと書けるようにするということである。
+これのためには `AsmParser` に手を入れて適当な箇所で `parseExpression` を呼びfootnote:[この
+`parseExpression` がどの程度の「式」をパーズしてくれるかは定かでない。TODO]、
+また `isSImm16` など即値判定の関数でこのような式に対して `true` を返すようにする。
+なおFixup時の式の評価などはLLVMが勝手にやってくれるようだfootnote:[もっとも
+これは即値部分にシンボルのみが書けたときから（よく考えれば）そうだったのだが。]。
+
+`CodeEmitter` では、即値の `Expr` に対して適切にFixupを生成する必要がある。
+「いつ、どのFixupを作成するべきか」を判断するためには
+命令のハードコーディングが必要になる。それよりはむしろRISC Vが導入しているような `InstFormat` を
+命令に埋め込むほうが後々の拡張性に優れるが、とりあえずこのままにしておくfootnote:[面倒なので。]。
+
+RISC Vの実装では `jal` のみを別枠として処理している。おそらくこれは `R_RISCV_JAL` などが
+addendに対応しないためである。RV16Kの場合も `R_RV16K_16` のみがaddendに対応するのでfootnote:[今決めた。]これに従う。
+したがって結局、単なるシンボルのみだけでなく式を受け取れるのは `li` 命令のみとなるfootnote:[仕組みさえ作っておけば、今後他の命令で同様の操作が必要になったときでも変更が容易である。]。
+
+ところでLanaiの実装では、二項演算について左辺のみを取得してFixupに追加している。
+これはaddendなどについて誤ったfixupを生成すると思われるが、調べていない（TODO）。
+
+結局即値に定数式を書けるようにするためにはi) `AsmParser` に手を入れて式をパーズするようにしii)
+`isSImm16` などで正しい定数式か否かを判断するようにしiii) `CodeEmitter` に手を入れて
+正しいfixupを作成するようにする必要がある。
+
+== コンパイラのスケルトンを作成する
+
+=== `RV16KAsmPrinter` と `RV16KMCInstLower` を追加
+
+やるだけ
+
+=== `RV16KInstrInfo` を追加
+
+やるだけ
+
+=== `RV16KRegisterInfo` を追加
+
+`RV16KGenRegisterInfo` の第一引数にはreturn addressを渡せば良い。
+
+frame pointerはx86で言うところのrbpのことのようだ。
+
+=== `RV16KSubtarget` を追加
+
+やるだけ
+
+=== `RV16KPassConfig` を追加
+
+やるだけ
+
+=== `RV16KISelDAGToDAG` を追加
+
+SelectionDAGをMachineDAGに変換するときに使用される。
+
+=== `RV16KCallingConv.td` を追加
+
+関数呼び出し規約について記述する。ここの記法については<<llvm-writing_backend-calling_conventions>>が
+詳しい。ここで `CSR` としてcallee-savedなレジスタを指定する必要がある。
+
+RISC Vの実装を参考にするとreturn addressを格納するレジスタはこれに**指定する**一方で、
+stack pointer registerは**指定しない**。RISC Vの仕様<<riscv-calling>>によれば
+`ra` はcaller-saved、 `sp` はcallee-savedとなっており良くわからない。
+
+=== `RV16KInstrInfo.td` を修正
+
+まず `RetFlag` を `SDNode` として追加する。
+これはすなわち `RetFlag` がSelectionDAGのノード（命令）として新たに使えるようになる
+ということを意味する。
+実際 `RV16KTargetLowering::LowerReturn` では `DAG.getNode` に `RV16KISD::RET_FLAG` を渡すことで
+このノードを作成している。
+ここで第一引数に渡す `RV16KISD::RET_FLAG` は別のところ（ `RV16KISelLowering.h` ）で
+定義する必要がある。また第二引数に `SDTNone` が渡されているため
+オペランドを取らないことがわかる（ほんまか？；TODO）
+
+その他命令を変換するための `Pat` を追加する。
+
+=== その他
+
+`RV32K.td` の `RV16KInstrInfo` では `guessInstructionProperties` に `0` を
+設定している。これによって `mayLoad, mayStore, hasSideEffects` に対する
+自動的な値の推論がなくなり、
+明示的に設定していない場合にはエラーが出力されるようになるfootnote:[と `Target.td` の
+コメントに記載がある。]。
+
+== 定数に対応する
+
+やるだけ
+
+== メモリ操作に対応する
+
+`load` が16bitの操作に対応することに注意。
+具体的にどのようなパターンを書けばよいかわからないときは `-debug-only=isel`
+を使用すると便利である<<llvm_dev_ml-how_to_debug_instruction_selection>>。
+例えば `load` を実装した後では、次のようにLLVM IRが変換されていくことが分かる。
+一方で途中で変換が失敗する場合は、パターンに誤りがあることが示唆される。
+
+....
+$ cat foo.ll
+define i16 @lw(i16 *%a) nounwind {
+  %1 = getelementptr i16, i16* %a, i16 3
+  %2 = load i16, i16* %1
+  %3 = load volatile i16, i16* %a
+  ret i16 %2
+}
+
+$ bin/llc -mtriple=rv16k -verify-machineinstrs -debug-only=isel < foo.ll
+	.text
+	.file	"<stdin>"
+
+
+
+=== lw
+Initial selection DAG: %bb.0 'lw:'
+SelectionDAG has 12 nodes:
+  t0: ch = EntryToken
+  t2: i16,ch = CopyFromReg t0, Register:i16 %0
+  t5: i16 = Constant<0>
+    t4: i16 = add t2, Constant:i16<6>
+  t7: i16,ch = load<(load 2 from %ir.1)> t0, t4, undef:i16
+    t8: i16,ch = load<(volatile load 2 from %ir.a)> t7:1, t2, undef:i16
+  t10: ch,glue = CopyToReg t8:1, Register:i16 $x8, t7
+  t11: ch = RV16KISD::RET_FLAG t10, Register:i16 $x8, t10:1
+
+
+Optimized lowered selection DAG: %bb.0 'lw:'
+SelectionDAG has 12 nodes:
+  t0: ch = EntryToken
+  t2: i16,ch = CopyFromReg t0, Register:i16 %0
+    t4: i16 = add t2, Constant:i16<6>
+  t7: i16,ch = load<(load 2 from %ir.1)> t0, t4, undef:i16
+      t12: i16,ch = load<(volatile load 2 from %ir.a)> t0, t2, undef:i16
+    t13: ch = TokenFactor t7:1, t12:1
+  t10: ch,glue = CopyToReg t13, Register:i16 $x8, t7
+  t11: ch = RV16KISD::RET_FLAG t10, Register:i16 $x8, t10:1
+
+
+Type-legalized selection DAG: %bb.0 'lw:'
+SelectionDAG has 12 nodes:
+  t0: ch = EntryToken
+  t2: i16,ch = CopyFromReg t0, Register:i16 %0
+    t4: i16 = add t2, Constant:i16<6>
+  t7: i16,ch = load<(load 2 from %ir.1)> t0, t4, undef:i16
+      t12: i16,ch = load<(volatile load 2 from %ir.a)> t0, t2, undef:i16
+    t13: ch = TokenFactor t7:1, t12:1
+  t10: ch,glue = CopyToReg t13, Register:i16 $x8, t7
+  t11: ch = RV16KISD::RET_FLAG t10, Register:i16 $x8, t10:1
+
+
+Legalized selection DAG: %bb.0 'lw:'
+SelectionDAG has 12 nodes:
+  t0: ch = EntryToken
+  t2: i16,ch = CopyFromReg t0, Register:i16 %0
+    t4: i16 = add t2, Constant:i16<6>
+  t7: i16,ch = load<(load 2 from %ir.1)> t0, t4, undef:i16
+      t12: i16,ch = load<(volatile load 2 from %ir.a)> t0, t2, undef:i16
+    t13: ch = TokenFactor t7:1, t12:1
+  t10: ch,glue = CopyToReg t13, Register:i16 $x8, t7
+  t11: ch = RV16KISD::RET_FLAG t10, Register:i16 $x8, t10:1
+
+
+Optimized legalized selection DAG: %bb.0 'lw:'
+SelectionDAG has 12 nodes:
+  t0: ch = EntryToken
+  t2: i16,ch = CopyFromReg t0, Register:i16 %0
+    t4: i16 = add t2, Constant:i16<6>
+  t7: i16,ch = load<(load 2 from %ir.1)> t0, t4, undef:i16
+      t12: i16,ch = load<(volatile load 2 from %ir.a)> t0, t2, undef:i16
+    t13: ch = TokenFactor t7:1, t12:1
+  t10: ch,glue = CopyToReg t13, Register:i16 $x8, t7
+  t11: ch = RV16KISD::RET_FLAG t10, Register:i16 $x8, t10:1
+
+
+===== Instruction selection begins: %bb.0 ''
+
+ISEL: Starting selection on root node: t11: ch = RV16KISD::RET_FLAG t10, Register:i16 $x8, t10:1
+ISEL: Starting pattern match
+  Morphed node: t11: ch = PseudoRET Register:i16 $x8, t10, t10:1
+ISEL: Match complete!
+
+ISEL: Starting selection on root node: t10: ch,glue = CopyToReg t13, Register:i16 $x8, t7
+
+ISEL: Starting selection on root node: t13: ch = TokenFactor t7:1, t12:1
+
+ISEL: Starting selection on root node: t7: i16,ch = load<(load 2 from %ir.1)> t0, t4, undef:i16
+ISEL: Starting pattern match
+  Initial Opcode index to 5
+  Morphed node: t7: i16,i16,ch = LW<Mem:(load 2 from %ir.1)> t2, TargetConstant:i16<6>, t0
+ISEL: Match complete!
+
+ISEL: Starting selection on root node: t12: i16,ch = load<(volatile load 2 from %ir.a)> t0, t2, undef:i16
+ISEL: Starting pattern match
+  Initial Opcode index to 5
+  Match failed at index 10
+  Continuing at 95
+  Morphed node: t12: i16,i16,ch = LW<Mem:(volatile load 2 from %ir.a)> t2, TargetConstant:i16<0>, t0
+ISEL: Match complete!
+
+ISEL: Starting selection on root node: t2: i16,ch = CopyFromReg t0, Register:i16 %0
+
+ISEL: Starting selection on root node: t9: i16 = Register $x8
+
+ISEL: Starting selection on root node: t1: i16 = Register %0
+
+ISEL: Starting selection on root node: t0: ch = EntryToken
+
+===== Instruction selection ends:
+Selected selection DAG: %bb.0 'lw:'
+SelectionDAG has 11 nodes:
+  t0: ch = EntryToken
+  t2: i16,ch = CopyFromReg t0, Register:i16 %0
+  t7: i16,i16,ch = LW<Mem:(load 2 from %ir.1)> t2, TargetConstant:i16<6>, t0
+      t12: i16,i16,ch = LW<Mem:(volatile load 2 from %ir.a)> t2, TargetConstant:i16<0>, t0
+    t13: ch = TokenFactor t7:2, t12:2
+  t10: ch,glue = CopyToReg t13, Register:i16 $x8, t7
+  t11: ch = PseudoRET Register:i16 $x8, t10, t10:1
+
+
+Total amount of phi nodes to update: 0
+*** MachineFunction at end of ISel ***
+# Machine code for function lw: IsSSA, TracksLiveness
+Function Live Ins: $x8 in %0
+
+bb.0 (%ir-block.0):
+  liveins: $x8
+  %0:gpr = COPY $x8
+  %1:gpr = LW %0:gpr, 0, implicit-def dead $flags :: (volatile load 2 from %ir.a)
+  %2:gpr = LW %0:gpr, 6, implicit-def dead $flags :: (load 2 from %ir.1)
+  $x8 = COPY %2:gpr
+  PseudoRET implicit $x8
+
+# End machine code for function lw.
+
+	.globl	lw                      # -- Begin function lw
+	.p2align	1
+	.type	lw,@function
+lw:                                     # @lw
+# %bb.0:
+	lw	a1, 0(a0)
+	lw	a0, 6(a0)
+	jr	ra
+.Lfunc_end0:
+	.size	lw, .Lfunc_end0-lw
+                                        # -- End function
+
+	.section	".note.GNU-stack","",@progbits
+....
+
+`RV16KTargetLowering` で次のように `Promote` を指定すると
+
+....
+for (auto N : {ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD})
+    setLoadExtAction(N, MVT::i16, MVT::i1, Promote);
+....
+
+`i1` に対する `extload, sextload, zextload` が `i16` のそれに変換される（TODO；多分）。
+
+== グローバル変数に対応する
+
+グローバル変数に対するlw/swに対応する<<github_riscv-llvm_patch_16>><<fpga_develop_diary-20190612040000>>。
+SelectionDAGノードである `GlobalAddress` を処理するために
+
+....
+setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
+....
+
+とし `lowerOperation` から `lowerGlobalAddress` を呼び出す。ここでは即値を `LI` を利用して
+読み込むためのDAGを作成する。
+
+とりあえず次のようなLLVM IRを読み込ませる。
+
+....
+@G = global i16 0
+
+define i16 @lw_sw_global(i16 %a) nounwind {
+  %1 = load volatile i16, i16* @G
+  store i16 %a, i16* @G
+  %2 = getelementptr i16, i16* @G, i16 9
+  %3 = load volatile i16, i16* %2
+  store i16 %a, i16* %2
+  ret i16 0
+}
+....
+
+すると `LLVM ERROR: LowerRV16KMachineInstrToMCInst: unknown operand type`
+とエラーがでるので修正する。
+
+アセンブリを出力するために `MachineInstr` を `MCInst` に変換するときに、
+`MachineInstr` に含まれる `MachineOperand` の `MO_GlobalAddress` に対応する必要がある。
+これはこのオペランドのシンボル（名前）を取得し、オフセットを含めた `MCExpr` として構築しなおし、
+`MCOperand::createExpr` に渡して `MCOperand` とすればよい。
+これで上記のLLVM IRが正しくコンパイルされるようになる。
+
+一方で `ret i16 0` を `ret i16 %1` としたLLVM IRは、次のようなエラーが出力され
+コンパイルされない。
+
+....
+$ bin/llc -mtriple=rv16k -verify-machineinstrs < foo.ll
+	.text
+	.file	"<stdin>"
+
+# After Post-RA pseudo instruction expansion pass
+# Machine code for function lw_sw_global: NoPHIs, NoVRegs
+Function Live Ins: $x8
+
+bb.0 (%ir-block.0):
+  $x10 = LI @G, implicit-def dead $flags
+  $x9 = LW $x10, 0, implicit-def dead $flags :: (volatile dereferenceable load 2 from @G)
+  SW $x8, killed $x10, 0, implicit-def dead $flags :: (store 2 into @G)
+  $x10 = LI @G + 18, implicit-def dead $flags
+  dead $x11 = LW $x10, 0, implicit-def dead $flags :: (volatile load 2 from %ir.2)
+  SW killed $x8, killed $x10, 0, implicit-def dead $flags :: (store 2 into %ir.2)
+  $x8 = MOV killed $x9(tied-def 0), implicit-def $flags
+  PseudoRET implicit $x8
+
+# End machine code for function lw_sw_global.
+
+*** Bad machine code: Tied physical registers must match. ***
+- function:    lw_sw_global
+- basic block: %bb.0  (0xf02c98)
+- instruction: $x8 = MOV killed $x9(tied-def 0), implicit-def $flags
+- operand 0:   $x8
+
+*** Bad machine code: Two-address instruction operands must be identical ***
+- function:    lw_sw_global
+- basic block: %bb.0  (0xf02c98)
+- instruction: $x8 = MOV killed $x9(tied-def 0), implicit-def $flags
+- operand 1:   killed $x9(tied-def 0)
+
+*** Bad machine code: Explicit operand marked as def ***
+- function:    lw_sw_global
+- basic block: %bb.0  (0xf02c98)
+- instruction: $x8 = MOV killed $x9(tied-def 0), implicit-def $flags
+- operand 2:   implicit-def $flags
+
+*** Bad machine code: Explicit operand marked as implicit ***
+- function:    lw_sw_global
+- basic block: %bb.0  (0xf02c98)
+- instruction: $x8 = MOV killed $x9(tied-def 0), implicit-def $flags
+- operand 2:   implicit-def $flags
+
+*** Bad machine code: Illegal physical register for instruction ***
+- function:    lw_sw_global
+- basic block: %bb.0  (0xf02c98)
+- instruction: $x8 = MOV killed $x9(tied-def 0), implicit-def $flags
+- operand 2:   implicit-def $flags
+$flags is not a GPR register.
+LLVM ERROR: Found 5 machine code errors.
+....
+
+これは `MOV` の定義が入力を2つ受け取っていたためである
+footnote:[ここまで問題が明らかにならなかった理由は良くわからない。]。
+正しい形式となるように変更しておく。
+
+....
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Defs = [FLAGS] in
+def MOV : RV16KInstRR16<0b11000000, (outs GPR:$rd), (ins GPR:$rs),
+                       "mov", "$rd, $rs">;
+....
+
+== 条件分岐に対応する
+
+これが複雑。LLVMはネイティブで `CMP` 命令相当のSelectionDAGノードを有しないため、
+独自に実装する必要がある。これをやっている例はいまのところx86しか見つけていない
+footnote:[ただし条件分岐周りは各アーキ工夫をこらすところのようで、TableGenに頼らず
+C\++コードをがりがり書いているバックエンドは多く存在する。]。
+
+x86ではまず `ISD::BRCOND` に対して `Custom` 指定をし `LowerOperation` から
+`LowerBRCOND` を呼び出す。ここでは`brcond` を `X86ISD::BRCOND` に変換する。
+
+....
+def SDTX86BrCond  : SDTypeProfile<0, 3,
+                                  [SDTCisVT<0, OtherVT>,
+                                   SDTCisVT<1, i8>, SDTCisVT<2, i32>]>;
+def X86brcond  : SDNode<"X86ISD::BRCOND",   SDTX86BrCond,
+                        [SDNPHasChain]>;
+....
+
+`X86ISD::BRCOND` はオペランドを3個とり、順に飛ぶ先・条件の種類・ `X86ISD::CMP` ノードと
+なっているようだが、詳細不明。
+
+`LowerBRCOND` 内ではかなりの最適化が図られているが `ISD::SETCC` に対する処理のみ
+追いかければ当分問題ないはず。TODO
+
+他の簡易な実装としてLEG<<LLVMBackend_2015_03_26_v2>>があった。
+ここでは `LEGDAGToDAGISel::Select` で割り込み `ISD::BR_CC` に対して `CMP` と `Bcc` の
+MachineNodeを作成している。これは <<llvm_dev_ml-br_cc_questions>>と同じ手法のようだ。
+ここの依存関係を表現するために `SDValue` の配列を作成しているが詳細不明。
+
+....
+SDNode *LEGDAGToDAGISel::SelectConditionalBranch(SDNode *N) {
+  SDValue Chain = N->getOperand(0);
+  SDValue Cond = N->getOperand(1);
+  SDValue LHS = N->getOperand(2);
+  SDValue RHS = N->getOperand(3);
+  SDValue Target = N->getOperand(4);
+
+  // Generate a comparison instruction.
+  EVT CompareTys[] = { MVT::Other, MVT::Glue };
+  SDVTList CompareVT = CurDAG->getVTList(CompareTys);
+  SDValue CompareOps[] = {LHS, RHS, Chain};
+  SDNode *Compare = CurDAG->getMachineNode(LEG::CMP, N, CompareVT, CompareOps);
+
+  // Generate a predicated branch instruction.
+  CondCodeSDNode *CC = cast<CondCodeSDNode>(Cond.getNode());
+  SDValue CCVal = CurDAG->getTargetConstant(CC->get(), N, MVT::i32);
+  SDValue BranchOps[] = {CCVal, Target, SDValue(Compare, 0),
+                         SDValue(Compare, 1)};
+  return CurDAG->getMachineNode(LEG::Bcc, N, MVT::Other, BranchOps);
+}
+....
+
+結局 `BR_CC` や `BRCOND` に対して `CMP` と `Jcc` を同時に発行できればよく、
+問題はここに依存関係が存在することである。すなわちこの間に `EFLAGS` を
+いじるような命令が来てはいけないのである。ただこの関係は `Defs` の
+定義によってよしなになるような気はする。
+
+TableGenのパターンでは複数命令を発行することはできないようなので
+<<llvm_dev_ml-multiple_result_instrs>>、どこかでフックする他ない。
+
+`SDValue(hoge, 1)` と書くと `hoge` がdefするものの2番めを取ってくるようだ。
+ただしこれは要確認だが、例えばx86で
+
+....
+    SDValue Sub = DAG.getNode(X86ISD::SUB, dl, VTs, Op0, Op1);
+    return SDValue(Sub.getNode(), 1);
+....
+
+とかくと `EFLAGS` を返していることになりそうだ。
+
+ここからの類推で `Uses` に書けばオペランドとして渡せるのではないかと思い次のように書いたが
+
+....
+def : Pat<(brcond (i16 (seteq GPR:$rs1, GPR:$rs2)), bb:$imm),
+          (JE simm8_lsb0:$imm, (CMP GPR:$rs1, GPR:$rs2))>;
+....
+
+次のようにエラーが出た。
+
+....
+anonymous_978: 	(JE simm8_lsb0:{ *:[i16] }:$imm, (CMP:{}:{} GPR:{}:$rs1, GPR:{}:$rs2))
+Included from /home/anqou/ano/secure_vm/llvm-project/llvm/lib/Target/RV16K/RV16K.td:23:
+/home/anqou/ano/secure_vm/llvm-project/llvm/lib/Target/RV16K/RV16KInstrInfo.td:215:1: error: In anonymous_978: Instruction 'JE' was provided 2 operands but expected only 1!
+def : Pat<(brcond (i16 (seteq GPR:$rs1, GPR:$rs2)), bb:$imm),
+....
+
+せやろなfootnote:[かなしい。]。
+
+Lanaiがよく見ると `CMP` と `Jcc` パターンだった。
+`CMP` に相当するのは `SFSUB_F` で、条件分岐自体は `BRCC` で行う。
+全体としてx86の方式を `BR_CC` に変換しつつ簡易化したような構成になっている。
+RV16Kv2でもこの方式を採用することにする。
+
+まず `BRCOND` はexpandするようにし `BR_CC` はcustom指定を行う。
+ここで `BRCOND` には `MVT::Other` を指定することに注意する。
+
+....
+setOperationAction(ISD::BRCOND, MVT::Other, Expand);
+setOperationAction(ISD::BR_CC, MVT::i16, Custom);
+....
+
+こうすることで、次のように条件が別の場所で作られて `br` に持ち込まれる場合に対応できる。
+なぜかは良くわからない（TODO）。
+
+....
+test11:
+  %val11 = load volatile i16, i16* %b
+  br i1 %c, label %end, label %test12
+....
+
+さて `BR_CC` を処理するための関数 `LowerBR_CC` を作成し作業を行う。
+ここでは `BR_CC` を `RV16KISD::CMP` と `RV16KISD::BR_CC` に構成し直す。
+すなわち `ISD::CondCode` を `RV16KISD::CondCode` に変換し、
+これを子ノードに持つような `RV16KISD::CMP` を作り、さらにそれを持つような `RV16KISD::BR_CC` を
+作成する。
+
+`RV16KISD::CMP` と `RV16KISD::BR_CC` は `RV16KInstrInfo.td` で新しいSelectionDAGの
+ノード（ `SDNode` ）として定義する。
+
+....
+def SDT_RV16KCmp      : SDTypeProfile<0,  2, [SDTCisSameAs<0, 1>]>;
+def SDT_RV16KBrCC     : SDTypeProfile<0,  2, [SDTCisVT<0, OtherVT>,
+                                                  SDTCisVT<1, i16>]>;
+
+def RV16KCmp : SDNode<"RV16KISD::CMP", SDT_RV16KCmp, [SDNPOutGlue]>;
+def RV16BrCC : SDNode<"RV16KISD::BR_CC", SDT_RV16KBrCC, [SDNPHasChain, SDNPInGlue]>;
+....
+
+`SDTCisSameAs` は指定するオペランドの型が全く同一であることを意味する。
+
+この構成では `RV16KISD::BR_CC` は第二オペランドに条件分岐の種類を持つため、
+それを利用してTableGen上でパターンマッチが可能である。
+
+....
+def : Pat<(RV16KCmp GPR:$rs1, GPR:$rs2), (CMP GPR:$rs1, GPR:$rs2)>;
+def : Pat<(RV16KBrCC bb:$imm7, RV16K_COND_E), (JE simm8_lsb0:$imm7)>;
+....
+
+`br` を `J` に対応させるために `simm16_lsb0` が `Operand<OtherVT>` を継承するようにすると、
+同じオペランドをとる `load` が正しく動かなくなってしまう。
+そこで `simm16_lsb0_j` という新しい `def` を用意し、これは `Operand<OtherVT>` を
+継承するようにした上で `j` や `jal` 命令はこれを参照するようにする。
+
+`MachineInstr` のオペランド中に `MachineOperand::MO_MachineBasicBlock` が登場するようになるので
+`LowerRV32KMachineOperandToMCOperand` の修正が必要である。
+
+== 関数呼び出しを実装する
+
+関数呼び出しをサポートするためにi) `PseudoCALL` を実装しii) `RV16KTargetLowering::LowerCall` を実装する。
+`PseudoCALL` は `RV16KISD::CALL` に対してパターンマッチし `JALR` に伸張されるfootnote:[本当は `JAL` になるべきだが、
+とりあえずここでは飛ぶ先の関数のアドレスをレジスタに入れて `JALR` で飛ぶ仕組みになっている。]。
+`ra` を変更するため `Defs` を上書きする必要がある。
+
+`RV16KISD::CALL` は `LowerCall` にて挿入される。これの前後には `ISD::CALLSEQ_START` と
+`ISD::CALLSEQ_END` が挿入される。 `ISD::CALLSEQ_START` は `ADJCALLSTACKDOWN` に、
+`ISD::CALLSEQ_END` は `ADJCALLSTACKUP` にパターンマッチで変換される。
+これらは `RV16KGenInstrInfo` のコンストラクタに渡され処理されるようだ（詳細要確認；TODO）[[adjcallstack]]。
+
+これらが具体的に何をやっているかはよくわからない（TODO）が、
+`RV16KFrameLowering::eliminateCallFramePseudoInstr` にて `ADJCALLSTACKDOWN` と
+`ADJCALLSTACKUP` は削除する際にフックを仕掛け、関数呼び出しの前後で行う処理を記述することが
+可能のようだ<<llvm_phabricator-d43752>>。
+
+`ISDOpcodes.h` にはこうある。
+
+....
+/// CALLSEQ_START/CALLSEQ_END - These operators mark the beginning and end
+/// of a call sequence, and carry arbitrary information that target might
+/// want to know.  The first operand is a chain, the rest are specified by
+/// the target and not touched by the DAG optimizers.
+/// Targets that may use stack to pass call arguments define additional
+/// operands:
+/// - size of the call frame part that must be set up within the
+///   CALLSEQ_START..CALLSEQ_END pair,
+/// - part of the call frame prepared prior to CALLSEQ_START.
+/// Both these parameters must be constants, their sum is the total call
+/// frame size.
+/// CALLSEQ_START..CALLSEQ_END pairs may not be nested.
+CALLSEQ_START,  // Beginning of a call sequence
+CALLSEQ_END,    // End of a call sequence
+....
+
+スタックサイズを渡している？
+
+`AnalyzeCallOperands` で、各々のオペランドをどの位置に置くか（どのレジスタか・スタックの何番目か）
+を決める。この関数はTableGenによって生成される。
+
+`NumBytes` はスタックに積まれる引数のサイズを表す（多分；要確認；TODO）。
+
+引数が `ByVal` であるというのは、その引数がレジスタに収まらないサイズの値渡しであることを意味するはず。
+例えば構造体を値渡しする場合などが含まれる。（詳細な条件を要確認；TODO）。
+ここではとりあえず対応しない。
+
+可変長引数にはここではとりあえず対応しない。
+
+`LowerCall` はおおまかにi) 引数の解析を行いii) `CALLSEQ_START` を発行しiii)
+各引数について `CopyToReg` を発行して仮想レジスタから物理レジスタへの
+割付を行いiv) 呼出し先がグローバルアドレスの場合はfootnote:[普通そうだ。むしろそうでない場合が思い当たらない。]
+このアドレスをレジスタに読み込むために `li` を発行しfootnote:[これは
+`LowerGlobalAddress` において行われる。]iv)
+引数に使用するレジスタ及びcallee-savedなレジスタは関数呼び出し中も継続して
+生存していることを表すためにオペランドに追加しfootnote:[本来必要なオペランド以外もオペランドに追加することで
+生存期間を引き伸ばせるようだ。RISC Vのコードから類推しただけなので確認が必要。TODO])
+`RV16KISD::CALL` を発行しvi) `RV16KISD::CALLSEQ_END` を発行しvii)
+戻り値を解析して戻り値のどの部分がどのレジスタ／スタックに載って返ってくるかを求めviii)
+`CopyFromReg` を発行して物理レジスタから仮想レジスタへの割付を行うfootnote:[これらの
+DAGは `Glue` を用いて1つにまとめられている。これによって間に余計な命令が挟まることを
+防いでいる<<llvm_dev_ml-135337>>。]。
+
+途中で `getCallPreservedMask` の戻り値をオペランドに追加している。
+これによってcaller-savedなレジスタが関数呼び出しによって上書きされることが
+指定されている。
+
+関数呼び出しの前後で `ra` を保存するために、スタックへのレジスタの退避と復帰を各々
+`RV16KInstrInfo::storeRegToStackSlot` と `RV16KInstrInfo::loadRegFromStackSlot` として
+実装する必要がある。このとき `addFrameIndex` を利用して `fp` からの距離で `lw/sw` を
+発行する。このときの距離は `RV16KRegisterInfo::eliminateFrameIndex` にて正しい値に変更する。
+将来的にはこの操作は `sp` からの距離に変更し `lwsp/swsp` 命令を使うように
+最適化したいが、とりあえずはこのままにしておく。どの部分で `fp` を `sp` に変換しているのかは
+要調査（TODO）。
+
+実装すると次のようなLLVM IRが
+
+....
+define i16 @defined_function(i16 %a) nounwind {
+  %1 = add i16 %a, 1
+  ret i16 %1
+}
+
+define i16 @test_call_defined(i16 %a) nounwind {
+  %1 = call i16 @defined_function(i16 %a) nounwind
+  %2 = add i16 %a, %1
+  ret i16 %2
+}
+....
+
+次のようなアセンブリに変換される。
+
+....
+	.text
+	.file	"<stdin>"
+	.globl	defined_function        # -- Begin function defined_function
+	.p2align	1
+	.type	defined_function,@function
+defined_function:                       # @defined_function
+# %bb.0:
+	addi	a0, 1
+	jr	ra
+.Lfunc_end0:
+	.size	defined_function, .Lfunc_end0-defined_function
+                                        # -- End function
+	.globl	test_call_defined       # -- Begin function test_call_defined
+	.p2align	1
+	.type	test_call_defined,@function
+test_call_defined:                      # @test_call_defined
+# %bb.0:
+	sw	ra, 2(fp)
+	sw	s0, 0(fp)
+	mov	s0, a0
+	li	a1, defined_function
+	jalr	a1
+	add	s0, a0
+	mov	a0, s0
+	lw	s0, 0(fp)
+	lw	ra, 2(fp)
+	jr	ra
+.Lfunc_end1:
+	.size	test_call_defined, .Lfunc_end1-test_call_defined
+                                        # -- End function
+
+	.section	".note.GNU-stack","",@progbits
+....
+
+ここで `2(fp)` などと出ているのは明確に**間違っており** `2(sp)` と出るべきである。
+というのも `fp` はアドレス上高位に位置する一方、 `sp` は低位に存在するからであるfootnote:[
+関数プロローグではi) `sp` を押し下げii) **`fp` を含む**全てのcallee-savedレジスタを
+スタック上に保存した後iii) `fp` を設定する。したがって
+`sp` からの相対アドレスでないと正しく指定ができないという事情もあるようだ。
+結局callee-savedなレジスタについては `sp` からの正のoffsetで参照され、
+それ以外のレジスタについては `fp` からの負のoffsetで参照される。]。
+これは `getFrameIndexReference` をオーバーライドすることによって
+将来的に解決されるfootnote:[x86の実装などを見ると、 `fp` を使用せず全て
+`sp` で対応する場合（ `hasFP` が `false` の場合）
+などもここでoffset計算を行うようだが、挙動を追いきれていない。TODO]footnote:[
+RISC Vの実装では `12(fp)` などと、実際に必要な値以上に深くスタックフレームが確保されている
+ように見える。これはRISC Vの16バイトアラインを考慮しているためと推察される。要確認TODO]。
+
+またこの段階では関数プロローグ・エピローグの出力には対応していないため、
+複雑な関数をネストして呼び出すような場合については対応していない。
+
+さてRISC Vではこの段階で `fastcc` 関数呼び出し規約に対応している
+footnote:[正確には「対応している」というより「許容している」が正しく、
+特に特別な処理は行っていない（ように見える；要確認；TODO）。]。
+だがここではとりあえず放置する。
+
+== `getFrameIndexReference` をオーバーライドする
+
+さて `RV16KFrameLowering::getFrameIndexReference` では次のようにして
+オフセットを求める。これはframe pointer相対になっている。
+
+....
+  int Offset = MFI.getObjectOffset(FI) - getOffsetOfLocalArea() +
+               MFI.getOffsetAdjustment();
+....
+
+`getObjectOffset` はスタック中のオフセットを返す。基本的にはこれでよい。
+他に `getOffsetOfLocalArea()` はローカル変数の保存場所へのオフセットを返し（多分；TODO）、
+`getOffsetAdjustment` はそれ以外の調整値のようだfootnote:[正直これら2つが
+必要なのかどうかはよくわからない。スタックフレームの定義によりそうだが、
+例えばLanaiでは両方考慮していない。]。
+
+....
+  explicit RV16KFrameLowering(const RV16KSubtarget &STI)
+      : TargetFrameLowering(StackGrowsDown,
+                            /*StackAlignment=*/2,
+                            /*LocalAreaOffset=*/0) {}
+....
+
+現状このように定義されるため `LocalAreaOffset` は `0` である。
+また `OffsetAdjustment` の定義には次のようなコメントが記載されている。
+
+....
+  /// The amount that a frame offset needs to be adjusted to
+  /// have the actual offset from the stack/frame pointer.  The exact usage of
+  /// this is target-dependent, but it is typically used to adjust between
+  /// SP-relative and FP-relative offsets.  E.G., if objects are accessed via
+  /// SP then OffsetAdjustment is zero; if FP is used, OffsetAdjustment is set
+  /// to the distance between the initial SP and the value in FP.  For many
+  /// targets, this value is only used when generating debug info (via
+  /// TargetRegisterInfo::getFrameIndexReference); when generating code, the
+  /// corresponding adjustments are performed directly.
+....
+
+デバッグ情報などを出力する際に使用されるようだ。
+
+== 関数プロローグとエピローグを出力する
+
+関数プロローグではi) その関数中で利用するスタックフレームのサイズを算出しii)
+`sp` をその分押し下げiii) callee-savedなレジスタをスタックに保存する
+命令分イテレータを先に進めfootnote:[この処理で飛ばされる命令の意味がよくわからない。
+TODO]iii) `fp` を `sp` にスタックサイズを加算したものとして算出する。
+関数エピローグではi) callee-savedなレジスタをスタックから復帰する命令分
+イテレータを戻しii) `sp` がアセンブリ中で変更された場合にはこれを `fp` から復帰しiii)
+`sp` にスタックサイズを足して元の位置に戻す。
+これらの動作は教科書通りのものであるから、結局問題になるのはi) どのように
+スタックサイズを算出するかii) どこで・いつcallee-savedなレジスタのスタック退避が
+行われるかである。
+
+`determineFrameLayout` では `MaxCallFrameSize` と `StackSize` について
+正しい値を求める。
+
+`MaxCallFrameSize` は事前に `computeMaxCallFrameSize` footnote:[
+この計算は `CallFrameSetupOpcode` と `CallFrameDestroyOpcode` が定義されていればよく、
+これは<<adjcallstack>>によってなされているようだ。]が呼ばれるなどしなければ
+デフォルトの値 `0` となる。
+
+`StackSize` は使用するスタックのバイト数である。
+
+現在のRISC V実装ではより簡素になっている<<llvm_phabricator-d43752>>。
+またstack realignment（とは？；TODO）については2019年8月現在でもWIPのようだ<<llvm-github_cd44ae>>
+footnote:[<<llvm_phabricator-d43752>>はC言語の可変長配列（VLA; Variable Length Array）に
+対応するためのパッチのようだ。関数中にVLAが存在する場合 `sp` が適切に
+アラインメントされないまま関数呼び出しが行われてしまう場合がある。
+それを防ぐために `ADJCALLSTACKDOWN` と `ADJCALLSTACKUP` を利用して
+`sp` の操作を行っている。]。
+
+....
+// Determines the size of the frame and maximum call frame size.
+void RISCVFrameLowering::determineFrameLayout(MachineFunction &MF) const {
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  const RISCVRegisterInfo *RI = STI.getRegisterInfo();
+
+  // Get the number of bytes to allocate from the FrameInfo.
+  uint64_t FrameSize = MFI.getStackSize();
+
+  // Get the alignment.
+  uint64_t StackAlign = RI->needsStackRealignment(MF) ? MFI.getMaxAlignment()
+                                                      : getStackAlignment();
+
+  // Make sure the frame is aligned.
+  FrameSize = alignTo(FrameSize, StackAlign);
+
+  // Update frame info.
+  MFI.setStackSize(FrameSize);
+}
+....
+
+`RV16KFrameLowering::determineCalleeSaves` ではcallee-savedなレジスタを特定し、
+`SavedRegs` に追加する。基本的には `TargetFrameLowering::determineCalleeSaves` を
+内部で呼ぶことによってi) `TargetRegisterInfo::getCalleeSavedRegs()` にてcallee-savedと
+指定されていてii) 実際に関数中で編集がなされるレジスタが特定される。
+一方で `fp` は `emitPrologue` 内で**callee-savedなレジスタ退避のためのコード生成が終わった後に**
+`fp` を設定するコードが出力される。したがってこのデフォルトの仕組みでは保存するべきレジスタと
+判断されない。そこで `RV16KFrameLowering::determineCalleeSaves` 内で明示的に
+指定する必要があるfootnote:[実際この指定を外してコード生成を行うと `fp` の
+スタック退避のためのコードは生成されない。一方で関数呼び出しなどが
+行われている場合には `ra` のためのコードは生成されるが、
+RISC-Vでは `ra` と `fp` の両方を明示的に退避している。これによって
+最適化が行われない場合には必ず `ra` と `fp` がスタック上に退避されることになり、
+`llvm.frameaddress` と `llvm.returnaddress` が動作することを保証している。]
+footnote:[異なる手法でcallee-savedレジスタ退避を行うアーキテクチャもある。
+Lanaiの `determineCalleeSaves` では
+`RCA` と `FP` のための領域のみを `MachineFrameInfo` に確保し
+`SavedRegs` への追加は行わない。そして `emitPrologue` にて、
+この領域に `FP` を退避するコードを生成する。]footnote:[RV16K（ないし
+実装を参照したRISC V）の `emitPrologue` では `MBBI` を `std::advance`
+を用いて先に進める部分がある。
+これはここで特定し生成されたcallee-savedレジスタ退避のコードの後に `fp`
+の設定を行うためである。]。
+
+これによって次のようなLLVM IRが
+
+....
+define i16 @defined_function(i16 %a) nounwind {
+  %1 = add i16 %a, 1
+  ret i16 %1
+}
+
+define i16 @test_call_defined(i16 %a) nounwind {
+  %1 = call i16 @defined_function(i16 %a) nounwind
+  %2 = add i16 %a, %1
+  ret i16 %2
+}
+....
+
+次のようなアセンブリに化けるようになった。
+
+....
+    .text
+    .file    "<stdin>"
+    .globl    defined_function        # -- Begin function defined_function
+    .p2align    1
+    .type    defined_function,@function
+defined_function:                       # @defined_function
+# %bb.0:
+    addi    sp, -2
+    sw    fp, 0(sp)
+    mov    fp, sp
+    addi    fp, 2
+    addi    a0, 1
+    lw    fp, 0(sp)
+    addi    sp, 2
+    jr    ra
+.Lfunc_end0:
+    .size    defined_function, .Lfunc_end0-defined_function
+                                        # -- End function
+    .globl    test_call_defined       # -- Begin function test_call_defined
+    .p2align    1
+    .type    test_call_defined,@function
+test_call_defined:                      # @test_call_defined
+# %bb.0:
+    addi    sp, -6
+    sw    ra, 4(sp)
+    sw    fp, 2(sp)
+    sw    s0, 0(sp)
+    mov    fp, sp
+    addi    fp, 6
+    mov    s0, a0
+    li    a1, defined_function
+    jalr    a1
+    add    s0, a0
+    mov    a0, s0
+    lw    s0, 0(sp)
+    lw    fp, 2(sp)
+    lw    ra, 4(sp)
+    addi    sp, 6
+    jr    ra
+.Lfunc_end1:
+    .size    test_call_defined, .Lfunc_end1-test_call_defined
+                                        # -- End function
+
+    .section    ".note.GNU-stack","",@progbits
+....
+
+== `select` に対応する
+
+`select` は条件に応じて2つの値の一方を選択する命令である。
+C言語の条件演算子footnote:[またの名を三項演算ｓうわなにをするやめｒ（静粛されました）]
+`?:` に対応するようだfootnote:[意味的にはそうだが、実際にClangがそうコンパイルするかは
+要確認TODO]。対応するSelectionDAGノードは `SELECT` と `SELECT_CC` で、
+次のように定義される。
+
+....
+/// Select(COND, TRUEVAL, FALSEVAL).  If the type of the boolean COND is not
+/// i1 then the high bits must conform to getBooleanContents.
+SELECT,
+
+/// Select with condition operator - This selects between a true value and
+/// a false value (ops #2 and #3) based on the boolean result of comparing
+/// the lhs and rhs (ops #0 and #1) of a conditional expression with the
+/// condition code in op #4, a CondCodeSDNode.
+SELECT_CC,
+....
+
+RISC Vでは `SELECT_CC` をexpandした上で `SELECT` をcustomにlowerして
+`RISCVISD::SELECT_CC` とし、これを擬似命令 `Select_GPR_Using_CC_GPR` で捕捉している。
+この擬似命令にはcustom inserterが付随していて、
+`RISCVTargetLowering::EmitInstrWithCustomInserter` にてこの擬似命令を
+`MachineInstr` に変換している。
+
+`EmitInstrWithCustomInserter` は `usesCustomInserter` フラグが立っている
+`MachineInstr` に対してフックし、これを適切な命令に変換・伸張する。
+すなわち `MachineInstr` を異なる `MachineInstr` に変換するということである。
+
+SparcもRISC Vと同様の手法を取っているfootnote:[歴史的には順序が逆だが。]が、
+`SELECT` ではなく `SELECT_CC` をlowerしている。
+そのため `LowerSELECT_CC` で比較命令と `SPISD::SELECT_ICC` を作成し、
+これを `EmitInstrWithCustomInserter` で処理している。
+なお `setcc` が使用された場合に冗長なコードが出力されるのを防ぐためSparc
+バックエンドでは `LookThroughSetCC` という関数を定義し、
+`(cmpLHS < cmpRHS ? 1 : 0) != 0 ? TrueVal : FalseVal` というノードが現れた
+場合は `cmpLHS < cmpRHS ? TrueVal : FalseVal` と変換する処理を行っているfootnote:[これは
+expandの処理に含まれないのだろうか。要調査TODO]。
+
+Lanaiでは `SELECT_CC` のハードウェアサポートが存在するため、
+`ISD::SELECT_CC` を `LanaiISD::SELECT_CC` に置換した後、その命令にパターンマッチさせて
+いる。
+
+x86では `SELECT_CC` をexpandしたうえで `SELECT` を捕捉し、
+`Select (COND, TRUEVAL, FALSEVAL)` に対し、 `COND` が真ならば `TRUEVAL` を
+`FALSEVAL` に代入するような `X86ISD::CMOV` を発行している。
+これはパターンマッチによって `CMOVcc` footnote:[条件が成立する場合に `MOV`
+を行うx86の命令。]に変換される。
+
+RV16KではRISC Vの手法をとる。すなわち `SELECT_CC` はexpandした上で `SELECT` と
+それに付随する `setcc` を `RV16KISD::SELECT_CC` にlowerする。
+`setcc` がない場合は定数 `0` を補う。その後 `RV16KISD::SELECT_CC` を
+擬似命令 `SelectCCrr` に変換し、これに対してcustom inserterを適用して
+処理を行う。
+
+`getNode` に `SDVTList` を渡しているのは `RV16KISD::SELECT_CC` の出力の型として
+`i16` とGlueの2種類があるからのようだが、判然としない（要確認；TODO）。
+
+`EmitInstrWithCustomInserter` では新たに制御構造を追加し、
+`SelectCCrr` を具体的な `MachineInstr` に変換する。
+`BuildMI` を用いて比較命令とジャンプ命令の2つを生成する。
+この比較命令とジャンプ命令の間に、後々のパスで別の命令が入る可能性は
+`Defs` と `Uses` の適切な指定によって排除されている（要確認；TODO）。
+
+新たに擬似命令として `SelectCCri` を追加し、右辺が即値の場合には `cmpi` を出力するように
+した。
+
+ところでわざわざ `EmitInstrWithCustomInserter` など使わずとも、
+`LowerSELECT` で適当なSelectionDAGを作り `SELECT` の挙動を実現することは
+できないのだろうか。調べた限りでは、LLVMのバックエンドにおいて新たなbasic blockを
+作成することはできずfootnote:[一方で `MachineBasicBlock` を作成することは
+（既に見てきたように）可能である。これによって、1つのbasic blockに複数の
+`MachineBasicBlock` が対応することになる。]、そのためにジャンプ先の
+`SDValue` を作ることができないように見えるが、判然としない（要確認；TODO）。
+
+== 落穂拾いをする
+
+image::img/gleaners.jpg[]
+__The Gleaners__ -- Jean-François Millet<<wikipedia-The_Gleaners>>
+
+上記で最低限のコード生成は行えるようになったが、未だ多くの（雑多な）IRに対応していない。
+そこで今までに作成した部分を利用してこれらに対応する。
+またその途中で必要となる未サポートの機能に対応する。
+参考にするRISC Vのパッチは主に<<github_riscv-llvm_patch_20>>である。
+
+以下では `setOperationAction` を利用してコード生成を可能にする場合が多い。
+関数定義に付されたコメントによれば、この関数に指定する型は入力と出力のどちらをも
+表す場合があるようだfootnote:[`setOperationAction` の指定によって、結果どのような
+アセンブリが生成されるかについてまとめた情報（実装以外に）はない（要確認；TODO）。
+結局、他のバックエンドを参考にしながら指定するほかない。
+なお実装を見る場合は `DAGTypeLegalizer` や `SelectionDAGLegalize`
+などを参考するとよさそうだ。]。
+
+....
+/// Indicate that the specified operation does not work with the specified
+/// type and indicate what to do about it. Note that VT may refer to either
+/// the type of a result or that of an operand of Op.
+void setOperationAction(unsigned Op, MVT VT,
+                      LegalizeAction Action) {
+  assert(Op < array_lengthof(OpActions[0]) && "Table isn't big enough!");
+  OpActions[(unsigned)VT.SimpleTy][Op] = Action;
+}
+....
+
+=== 大きなスタックフレームに対応する
+
+関数プロローグでは `sp` を押し下げるコードを出力する必要がある。
+このとき小さいスタックフレームであれば `addi` のみで対応できるため問題にならない。
+
+....
+define void @test() nounwind {
+  %tmp = alloca [ 3 x i8 ] , align 2
+  ret void
+}
+....
+
+....
+$ bin/llc -mtriple=rv16k -verify-machineinstrs -print-after=prologepilog < foo.ll > /dev/null
+# *** IR Dump After Prologue/Epilogue Insertion & Frame Finalization ***:
+# Machine code for function test: NoPHIs, TracksLiveness, NoVRegs
+Frame Objects:
+  fi#0: size=3, align=2, at location [SP-6]
+  fi#1: size=2, align=2, at location [SP-2]
+
+bb.0 (%ir-block.0):
+  $x1 = frame-setup ADDI $x1(tied-def 0), -6, implicit-def $flags
+  SW killed $x2, $x1, 4, implicit-def $flags
+  $x2 = MOV $x1, implicit-def $flags
+  $x2 = frame-setup ADDI $x2(tied-def 0), 6, implicit-def $flags
+  $x2 = LW $x1, 4, implicit-def $flags
+  $x1 = frame-destroy ADDI $x1(tied-def 0), 6, implicit-def $flags
+  PseudoRET
+
+# End machine code for function test.
+....
+
+一方で大きなスタックフレームでは `li` と `add` footnote:[実際には
+状況によって `sub` も用いられる。] を組み合わせる必要がある。
+このとき一度使い捨てのレジスタに `li` で即値を読み込み、
+その上で `add` しなければならない。これをナイーブに実装するfootnote:[以前の実装は
+このナイーブな手法であったが、その部分を使用する適切なテストが存在しなかったため
+エラーにならなかった。ここでの修正とともにテストに `large-stack.ll`
+<<github_riscv-llvm_patch_27>>を追加した。]
+と次のようなエラーが出る。
+
+....
+define void @test() nounwind {
+  %tmp = alloca [ 30000 x i8 ] , align 2
+  ret void
+}
+....
+
+....
+$ bin/llc -mtriple=rv16k -verify-machineinstrs  < foo.ll
+	.text
+	.file	"<stdin>"
+
+# After Prologue/Epilogue Insertion & Frame Finalization
+# Machine code for function test: NoPHIs, TracksLiveness, NoVRegs
+Frame Objects:
+  fi#0: size=30000, align=2, at location [SP-30002]
+  fi#1: size=2, align=2, at location [SP-2]
+
+bb.0 (%ir-block.0):
+  %0:gpr = frame-setup LI 30002, implicit-def $flags
+  $x1 = frame-setup SUB $x1(tied-def 0), killed %0:gpr, implicit-def $flags
+  SW killed $x2, $x1, 30000, implicit-def $flags
+  $x2 = MOV $x1, implicit-def $flags
+  %1:gpr = frame-setup LI 30002, implicit-def $flags
+  $x2 = frame-setup ADD $x2(tied-def 0), killed %1:gpr, implicit-def $flags
+  $x2 = LW $x1, 30000, implicit-def $flags
+  %2:gpr = frame-destroy LI 30002, implicit-def $flags
+  $x1 = frame-destroy ADD $x1(tied-def 0), killed %2:gpr, implicit-def $flags
+  PseudoRET
+
+# End machine code for function test.
+
+*** Bad machine code: Function has NoVRegs property but there are VReg operands ***
+- function:    test
+LLVM ERROR: Found 1 machine code errors.
+....
+
+これはおそらく `frame-setup/frame-destroy` に仮想レジスタ `%0/%1/%2` が登場していることが
+原因である。これらは本来物理レジスタに割り付けられなければならないためエラーが
+発生しているfootnote:[このエラーは `-verify-machineinstrs` オプションを
+指定しているために発生している。これを指定しない場合はそのまま処理が継続し、
+別の場所でエラーが出る。]。
+スタックフレームの調整値が大きい場合 `addi` を使用することが出来ず `li` と `add` を
+組み合わせて実現する必要がある。ここで使用する使い捨ての仮想レジスタに物理レジスタが
+割り付けられていないようだ。これに対応するためには `RV16KRegisterInfo` にて
+`requiresRegisterScavenging` と `requiresFrameIndexScavenging` から `true` を返すよう
+オーバーライドする必要がある<<github_riscv-llvm_patch_27>>。
+LLVMはレジスタ割付をした後に関数プロローグ・エピローグの挿入を行う
+<<llvm-code_generator>>。そのため関数プロローグ・エピローグで挿入される
+仮想レジスタに正しく物理レジスタを割り付ける特別な仕組みが必要となるようだ
+footnote:[それを行っているのがregister scavengerのようだが、詳細は要調査；TODO]。
+
+=== 命令に対するフラグを追加する
+
+2オペランド命令のうち左右辺を入れ替えられるものについては `isCommutable` を `1` にする。
+これによって生成される命令が効率化されるfootnote:[例えば
+`and x1, x0` 後に `mov x0, x1` とする場合 `and` に `isCommutable`
+フラグが立っていれば、2つの命令をまとめて `and x0, x1` とできる（場合がある）。]。
+また `isMoveImm` や `isMoveReg` ・ `isAdd` フラグなども（おまじない程度に）立てておく。
+
+=== `SETCC` に対応する
+
+条件分岐や `SELECT` に付随する `SETCC` には対応したが、
+単発の `SETCC` には対応できていない。RV16Kには対応する命令がないため、
+これはexpandして `SELECT` として扱うfootnote:[Sparcも同様の手法を採用している。]。
+
+=== キャリー付き加減算に対応する
+
+<<github_riscv-llvm_patch_20>>では `ADDC/ADDE/SUBC/SUBE` に対応している。
+これらは他倍長の加減算に対応するための命令でcarryを（明示的に）
+受け取り・出力する加減を行う。このような命令はRV16Kにはないためexpandする必要がある。
+
+しかし試してみると、expandしなくともすでにi32の演算に対応していたfootnote:[ただし
+`i32` の結果を関数から返却するために関数呼び出し規則を変更する必要がある。]。実際
+現在のRISC V実装でもこれらに対するexpandは明示されていない。
+どうやらLLVM core側で指定されるようになったようだ<<llvm_phabricator-d47422>>。
+
+=== `LowerCall` 内で `ExternalSymbolSDNode` を処理する
+
+すでに `GlobalAddress` については対応しているが、同様に `ExternalSymbol` についても
+対応する。 `TargetExternalSymbol` に変換した上で `LI` にて値を読み込むようにする。
+これによって `MachineOperand::MO_ExternalSymbol` が `MachineInstr` 中に出現するようになるため、
+`LowerRV16KMachineOperandToMCOperand` にてこれに対処する。
+
+なお `ExternalSymbol` は、そのシンボルが指す関数をLLVMが把握していないときに用いられる点で
+`GlobalAddress` と異なる<<llvm_dev_ml-001264>>footnote:[LLVMが把握していない関数を呼ぶとは
+これいかに。参照先ではランタイムライブラリを呼ぶ場合などが説明されているがよくわからなかった。
+ランタイムライブラリの関数（後に登場する `__mulsi3` など）はコンパイラが挿入するため、
+具体的な関数プロトタイプを埋め込むことは困難ということか？　実際アセンブリ中にシンボル名のまま
+出力すれば目的は達成されるため、無理にこれを特定する必要はない。要調査；TODO]。
+
+=== 掛け算に対応する
+
+後の `CTLZ` の実装などでも必要となる掛け算を実装する。RV16Kv2では掛け算命令が存在しないため
+`MUL/SMUL_LOHI/UMUL_LOHI/MULHS/MULHU` についてexpandする。ここで `SMUL_LOHI/UMUL_LOHI` は
+Nビット二数を掛けて得られる2Nビットの結果を2つのNビットレジスタにて返す。
+また `MULHS/MULHU` は同様の2Nビットの結果のうち、上位Nビットのみを返す。
+なおLLVMにおいて `mul` は符号の有無を問わないfootnote:[逆に言えば
+すべて符号なしとして積を計算してよい。これはi) LLVMが2の補数表現を採用していることとii)
+結果とオペランドが同じビット幅を持っていることから従うようだ<<llvm-langref>>。]。
+
+さてこれらの命令は `__mulhi3` と `__mulsi3` を呼ぶようにexpandされる。
+`__mulhi3` は16bit整数の掛け算を行い `__mulsi3` は32bit整数の掛け算を行う（ぽい；要確認 TODO）。
+したがってこれらの関数がリンクされる必要がある。たとえばRISC Vではcompiler-rtに
+`__mulsi3` を追加して目的を達成している<<github-riscv_compiler_rt>><<llvm_phabricator-d42958>>。
+compiler-rtは主にClangやLLVMのためのランタイムライブラリである<<compiler_rt>>。
+
+とりあえずここではcompiler-rtまで踏み込むことは後回しにし、
+文字列として `__mulhi3` などを出すまでに留める。
+
+=== `ROTL/ROTR/BSWAP/CTTZ/CTLZ/CTPOP` に対応する
+
+特殊なfootnote:[ISAや人によっては特殊でないかもしれないが。]ビット演算に対応する。
+RV16Kにはこれらに対応する命令が直接は存在しないためexpandする。
+各々の操作の意味については<<llvm-langref>>に詳しい。
+
+`rotl` のようなLLVM IRレベルで対応する関数のことをintrinsic functionと呼ぶ。
+the intrinsicと呼称される場合もある。ようするにビルトイン関数のことのようだ。
+拡張方法が<<llvm-extendingllvm>>にある。
+
+=== 除算・剰余に対応する
+
+RV16Kv2には除算・剰余のための命令が存在しないため
+`SREM/SDIVREM/SDIV/UREM/UDIVREM/UDIV` についてexpandする。
+
+=== 32bitのシフトに対応する
+
+`SHL_PARTS/SRL_PARTS/SRA_PARTS` についてexpandする。
+これによって `__lshrsi3/__ashrsi3/__ashlsi3` を各々呼ぶように伸張される。
+
+=== 単体の `sext/zext/trunc` に対応する
+
+`SIGN_EXTEND_INREG` を `i1` と `i8` についてexpandするfootnote:[`i16` はレジスタが16bitで
+あるためか勝手にexpandされるようだ。]。
+
+=== 間接ジャンプに対応する
+
+`brind` に対するパターンをTableGenファイルに記述する。
+
+間接ジャンプに関するRISC Vのテストでは `getelementptr inbounds` が使用されている<<github_riscv-llvm_patch_20>>。
+LLVM IRの言語仕様<<llvm-langref>>によれば、 `inbounds` が指定される場合、
+第二引数として渡すbase pointerが適切なアドレスを指して
+いないときには結果の値としてpoison value footnote:[LLVM IRではオペランドに不適切な
+値が渡された場合poison valueを返却し、命令に依存関係がある間はこれを伝播させる。
+その後その値が別の場所で使用される（例えばメモリロードのアドレスとして用いられる等）
+に際してundefに変換され、結果未定義の挙動を行うことになっているようだ<<llvm-langref-poison_value>>が、
+ちゃんと読んでいない TODO。これがアセンブリとどう対応するのかわからない。
+とりあえずinvalidな値が出力されるという認識でよさそうだ。]が返される。
+ここでどのようにその適切性を調べるのかは判然としない。
+実際関数の引数が第二引数にくるような今回の場合では、実行時にならなければ
+判断がつかないように思われるfootnote:[というかこれはまさにGCの挙動であって、
+コンパイル時に完全に把握することは（ライスの定理的に（言いたかっただけ））不可能ではないのか。]。
+要確認；TODO。実際この例では `inbounds` がなくとも正常に動作したが、おまじない程度につけておく。
+
+=== `BlockAddress` のlowerに対応する
+
+`BlockAddress` はbasic blockのアドレスを表す。C言語においてラベルのアドレスを取得し
+`goto` する場合などに用いられる<<github-emscripten-issues-34>>footnote:[使いどころが無いように
+思えるが、Ruby VMで実際に使用されているらしい<<github-emscripten-issues-34>>。]。
+LLVM IRでは `blockaddress` 定数を利用することで取得できる<<llvm-langref>>。
+
+=== ジャンプテーブルに対応しない
+
+LLVM IRには `switch` という命令があり、意味論はC言語の `switch` 文と対応するfootnote:[実際にClangが
+`switch` 文 を `switch` 命令 に対応させているかは要調査；TODO。]。
+これに対応したい。
+
+LLVMは `switch` をコンパイルする際にjump tableを用いる場合がある<<switch_lowering_in_llvm>>。
+これに対応するためには `ISD::BR_JT` と `ISD::JumpTable` を適切に処理する必要がある。
+しかしRISC Vではこれを無効化している。AVRも同様である<<github-avr_llvm-issues-88>>。
+Lanaiの実装を参考にすると `GlobalAddress` などと同様に処理すれば良いように見える。
+
+とりあえずここではRISC V・AVRと同様に `setMinimumJumpTableEntries(INT_MAX);` とすることで
+ジャンプテーブルの生成を抑止することで解決するfootnote:[あとの作業と直交していて
+手を抜けるところはとりあえず抜いておく。]。これによって `switch` は当面
+`if-else` の連続としてコンパイルされることになるようだfootnote:[実際の出力と
+<<switch_lowering_in_llvm>>からの推論。詳細は要調査；TODO]。
+
+== frame pointer eliminationに対応する
+
+現在の実装では `sp` と `fp` の両方を使用してスタックの操作を行っている。
+これはスタックに対する操作全てをカバーするためには必要だfootnote:[後に登場する
+`hasFP` の実装を見ると、具体的にどのような場合に `fp` が必要となるのか分かる。]が、
+一方で `sp` のみで十分である関数も多い。そこでそのような場合に限って
+`fp` の使用をやめ、全て `sp` を通じてスタックを操作することで、
+レジスタを1つ多く使用することができる。これを実装する。
+参考にするパッチは<<github_riscv-llvm_patch_27>>。
+
+まず `RV16KFrameLowering::hasFP` を実装する。この関数は引数に `MachineFunction` をとり、
+この関数に `fp` が必要か否かを返す。その後prologue/epilogueやRegisterInfoなどを適切に
+実装すればよい。
+
+この変更によってテストの正解コードが多く変更されるので頑張って修正する。
+Vimで置換すると楽だった。コマンドラインウィンドウはいいぞ。
+
+幾つかのテスト（ `large-stack.ll` ）については、これによってテストしたい内容が
+最終的なアセンブリから消えてしまう場合があるため `-frame-pointer=all` オプションを
+つけてframe pointer eliminationを無効化した場合の結果もテストするようにする。
+なお<<github_riscv-llvm_patch_27>>ではこれのために `-disable-fp-elim` オプションが
+使われているが、オプションの名前が最近変更されたようだ<<llvm_phabricator-d56351>>。
+
+== 動的なスタック領域確保に対応する
+
+C99の可変長配列（VLA; Variable-Length Array）のような、スタック領域の動的確保に対応する。
+領域の確保そのものは `alloca` 命令によって行われる。したがってこの命令が動的な値をオペランドに
+取れるように `DYNAMIC_STACKALLOC` をexpandする。
+
+また一般的に、動的スタック領域確保にはスタック状態の退避・復帰footnote:[要するに `sp` を
+スタックにpush/popするということである。]が必要である
+<<llvm_dev_ml-115805>><<hatenablog-rhysd-230119>>。
+このために `llvm.stacksave` と `llvm.stackrestore` 命令が用いられるため、これらに対応する
+`STACKSAVE` と `STACKRESTORE` をexpandする。命令の詳細は<<llvm-langref>>を参照する。
+
+== 関数呼び出しを `jal` で行うようにする
+
+現状関数呼び出しは、まず `li` で関数のアドレスをレジスタに格納し、
+その後に `jalr` を実行して関数にジャンプしている。しかしRV16Kv2では
+`jal` 命令が16bitのアドレスをそのままとることができるため、
+この2命令を `jal` 1命令に置き換えることが可能である。
+
+RISC Vのアセンブリ上では、関数呼び出しを `call` という一命令で表現している。
+これは `PseudoCALL` と1対1に対応する。
+しかしこのような命令はRISC Vに存在せず、
+内部的には `auipc` と `jalr` の二命令を用いて表現される。
+一方で、RISC Vには `jal` 命令が存在し、
+これを用いれば一命令で関数呼び出しを実現できるように思えるが、
+実際にはビット幅の制限からすべての関数呼び出しにおいて `jal` を使えるわけではない。
+さらに悪いことに `jal` が適用できるか否か、一般的にはリンク時まで判断できない。
+したがってRISC Vのバックエンドは、すべての `PseudoCALL` を `auipc` と `jalr` に置き換える手法を
+採用している<<llvm_phabricator-d44885>><<llvm_phabricator-d45859>>。
+
+対してRV16Kはすべての関数呼び出しを `jal` で扱うことができ、
+またアセンブリ上も `jal` と表記される。したがって `PseudoCALL` 疑似命令を導入するメリットは
+少なく、単にパターンマッチを行えば良い。
+
+そこで従来の `PseudoCALL` の代わりに `def : Pat<(Call GPR:$rs), (JALR GPR:$rs)>;` を追加すると
+`LowerRV16KMachineInstrToMCInst` が `MO_RegisterMask` を扱えないというエラーが出る。
+`MO_RegisterMask` は関数呼び出しを行う際などに指定され、
+関数呼び出しなどによって非明示的に書き換わるレジスタを表す<<llvm-code_generator>>footnote:[正確には
+書き換わらないレジスタについて記述する。記述しなかったそれ以外のレジスタが
+書き換えられるとLLVMは認識する。]。
+これはレジスタのimplicit defと同じ役割のため `MCInst`
+においては無視するように変更する<<github_riscv-llvm_patch_18>>。
+
+続いて `jalr` のオペランドに直接シンボルを指定するように変更する。これが本題である。
+シンボルというのは結局 `GlobalAddress` と `ExternalSymbol` のことなので、
+これらについてパターンマッチを追加する。次いで、現在 `LowerCall` でfootnote:[実際には
+`LowerGlobalAddress` と `LowerExternalSymbol` を呼び出すことで行われている。]行っている
+`LI` ノードの作成をやめ、 `TargetGlobalAddress` と `TargetExternalSymbol` の変換のみを
+行うようにする。
+
+ここで次のように指定すると正しく動作する。
+
+....
+def : Pat<(Call GPR:$rs), (JALR GPR:$rs)>;
+def : Pat<(Call tglobaladdr:$dst), (JAL tglobaladdr:$dst)>;
+def : Pat<(Call texternalsym:$dst), (JAL texternalsym:$dst)>;
+....
+
+ここで下2つをコメントアウトすると `jal` の代わりに `jalr` が使用される。
+どうやら `tglobaladdr` が `GPR` にマッチするようだが、原因不明（TODO）。
+
+いままでのテストが壊れるので頑張って直す。
+
+== `FrameIndex` をlowerする
+
+現在のバックエンドで次のようなLLVM IRをコンパイルしようとするとエラーが出力される。
+
+....
+$ cat foo.ll
+define void @test() {
+entry:
+  %retval = alloca i16, align 2
+  store i16 0, i16* %retval, align 2
+  ret void
+}
+
+$ bin/llc -mtriple=rv16k -verify-machineinstrs < foo.ll
+	.text
+	.file	"<stdin>"
+LLVM ERROR: Cannot select: t2: i16 = FrameIndex\<0\>
+In function: test
+....
+
+SelectionDAGの `FrameIndex` に対してパターンマッチが存在しないために
+`MachineInstr` を選択できないというエラーである。
+
+そもそも `FrameIndex` とは何か。<<stackoverflow-frame_lowering>>では次のように説明される。
+
+[quote]
+____
+When variables on the stack are referred to before the prologue-epilogue insertion (PEI) step, they are addressed using "frame indexes", an arbitrary name for a location that will eventually resolve to a stack-pointer relative offset.
+____
+
+`TargetSelectionDAG.td` には次のように定義される。
+
+....
+def frameindex  : SDNode<"ISD::FrameIndex",           SDTPtrLeaf, [],
+                         "FrameIndexSDNode">;
+....
+
+<<llvm-welcome_to_the_back_end_2017>><<llvm_dev_ml-selecting_frame_index>>や
+上記によれば、
+frame indexとはフレーム上に割り付けられた変数の位置を表す抽象的なアドレスのこと
+footnote:[アドレスそのものであって、それが指す値ではないことに注意が必要である。]であり、
+関数プロローグ・エピローグ挿入時に具体的な値（ `sp` や `fp` からの相対アドレスなど）
+に置き換えられる。
+逆に言えば命令選択時などはこのframe indexを各種命令のオペランドとすることになる。
+そのような状態に対処するために `ISD::FrameIndex` が用意されている。
+これについて独自アーキテクチャ側で対応するためには、まずi) `frameindex` をオペランドとして受け取る
+ような命令を定義する。ただし直接 `frameindex`
+をオペランドに指定することはLLVMの仕様上できない<<github_riscv-llvm_patch_22>>ため、
+`frameindex` をtarget frame indexに変換するような `ComplexPattern` を定義し、
+これをオペランドの型として指定するfootnote:[パターンを型として指定するというのは若干違和感がある。
+要調査。TODO]。これによってオペランドの `frameindex` は適切に処理されることになる。
+ついで `frameindex` （を含む `ComplexPattern` ）をオペランドとして持たない場所で
+`frameindex` が使用された場合に対処するため `RV16KDAGToDAGISel::Select` で `ISD::FrameIndex` を
+トラップする。ここではレジスタに格納されたframe indexに即値0を足すようなDAGノードを
+RISC VやLanaiは返している。よくわからない。TODO
+とりあえず `llvm_unreachable` を仕込んで、エラーになるまで
+放置するfootnote:[これを俗に「バグを泳がせる」と言ったり言わなかったりする。]。
+
+....
+//===----------------------------------------------------------------------===//
+// Complex pattern definitions.
+//
+
+// Complex patterns, e.g. X86 addressing mode, requires pattern matching code
+// in C++. NumOperands is the number of operands returned by the select function;
+// SelectFunc is the name of the function used to pattern match the max. pattern;
+// RootNodes are the list of possible root nodes of the sub-dags to match.
+// e.g. X86 addressing mode - def addr : ComplexPattern<4, "SelectAddr", [add]>;
+//
+class ComplexPattern<ValueType ty, int numops, string fn,
+                     list<SDNode> roots = [], list<SDNodeProperty> props = [],
+                     int complexity = -1> {
+  ValueType Ty = ty;
+  int NumOperands = numops;
+  string SelectFunc = fn;
+  list<SDNode> RootNodes = roots;
+  list<SDNodeProperty> Properties = props;
+  int Complexity = complexity;
+}
+....
+
+`ComplexPattern` に指定するroot nodesは、パターンマッチが試行されるべきノードを
+表している。例えばx86の `lea32addr` では次のように定義され、
+通常の四則演算を `lea` 命令に変更できることを示唆しているfootnote:[実際には
+`selectLEAAddr` 関数内で「 `lea` 命令に置き換える価値があるか」を判断し（ `Complexity` ）
+ているようだ（要確認；TODO）。]。
+
+....
+def lea32addr : ComplexPattern<i32, 5, "selectLEAAddr",
+                               [add, sub, mul, X86mul_imm, shl, or, frameindex],
+                               []>;
+....
+
+ここで、これはSelectionDAGからMachineDAGに変換する部分に影響することに注意が必要である。
+例えば `RV16KInstrInfo::storeRegToStackSlot` などで `addFrameIndex` を使用して
+frame indexを指定するが、これはすでに `MachineDAG` ノードであるため、
+frame indexを処理する機構を必要としない。
+
+ここで登場した抽象的なスタックは `MachineFrameInfo` によって管理される。
+
+`add` のみならず `add` と等価な `or` についてもパターンが定義される。
+これは存在価値が良くわからないのと、他の命令中でやらない理由がわからない。
+とりあえずやめておく。TODO
+
+== ClangをRV16Kに対応させる
+
+今までRV16KバックエンドはLLVM IRを受け取りアセンブリ（やオブジェクトファイル）を出力する
+ものとして作成してきた。しかし我々が本当にほしいものはCコンパイラであり、
+その入力はC言語ソースコードである。
+そこでClangをRV16Kに対応させ、本当の「コンパイラ」として駆動するようにする。
+
+これに際して参照するRISC Vのパッチは `clang` ディレクトリにまとめられている
+<<github-riscv_llvm-clang>>。また単純な32bitRISCアーキテクチャでない
+バックエンドのClang対応としてAVRのものや、
+ELVMバックエンドのClang対応<<github-elvm_clang>>も参考になる。
+
+=== ClangのターゲットにRV16Kを追加する
+
+`clang/lib/Basic/Targets.cpp` の `AllocateTarget` にて
+`rv16k` のtripleが渡された場合には `RV16KTargetInfo` のインスタンスを返すようにし、
+`clang/lib/Basic/Targets/RV16K.{cpp,h}` にその定義を記述する。
+
+ここで整数や浮動小数点などのビット幅を指定する<<elvm-slide>>。
+`RV16KTargetInfo` が継承する `TargetInfo` は32bit RISCアーキテクチャを
+念頭においた値をデフォルトとしているため、これを16bit用に適宜変更する。
+似たようなアーキテクチャとしてAVRのバックエンドが参考になる。
+
+以上により `clang` が一応動作するようになる。動かすときには次のように
+`-target rv16k` を指定することでrv16kを指定するfootnote:[あるいは `-triple rv16k--` としてもよい。]。
+
+....
+$ bin/clang -S -c -target rv16k foo.c -o foo.s
+....
+
+=== ClangのdriverにRV16Kを追加する
+
+先程のコマンドで、直接オブジェクトファイルを出力させるために
+`-S` オプションを外すとエラーとなる。これはclangが内部的にGNU asを呼ぶためである。
+これをllvm-mcに変更するためには `-fintegrated-as` オプションを指定すればよいが、
+いちいちユーザが指定するよりはむしろ内部的にデフォルトの設定とすれば良い
+<<llvm_dev_ml-087879>><<stackoverflow-27467293>>。
+
+そのために `clang/lib/Driver/Driver.cpp` を書き換えrv16kのtripleに対して
+`RV16KToolChain` のインスタンスを返すようにし、またその定義を
+`clang/lib/Driver/ToolChains/RV16K.h` に記述する。
+RISC Vの対応するパッチ<<github-riscv_llvm-clang-03>>では
+`RV16K.cpp` も記述し、コンパイル時に必要なinclude flagsの設定や
+リンカのための設定を行っているが、RV16Kv2では現状そこまでの記述は
+必要ないfootnote:[仕様が固まっていない。]。そこでLanaiバックエンドの
+記述を参考にし `-fintegrated-as` に対応する `IsIntegratedAssemblerDefault` のみを
+記述し、その他の関数は空にしておく。
+
+=== frame pointer eliminationを最適化時に有効にする
+
+`clang/lib/Driver/ToolChains/Clang.cpp` の `useFramePointerForTargetByDefault`
+に `Triple::rv16k` を追加すれば良い。このファイルでは他にターゲットに依存した
+コマンドラインオプション等を追加できるが、RV16Kv2では存在しないのでその変更は
+行わない。
+
+また同じファイルに `char` 型が `signed` か否かを決める `isSignedCharDefault` という
+関数がある。デフォルトでは `signed` になるようだが、RISC Vは `unsigned` に
+変更している。RV16Kv2では `signed` なのでfootnote:[今決めた。]このままにしておく。
+
+このようなLLVM IRを入力してみる。
+
+....
+char add(char a, char b)
+{
+    return a + b;
+}
+....
+
+signedの場合。
+
+....
+define dso_local signext i8 @add(i8 signext %a, i8 signext %b) local_unnamed_addr #0 {
+entry:
+  %add = add i8 %b, %a
+  ret i8 %add
+}
+....
+
+unsignedの場合。
+
+....
+define dso_local zeroext i8 @add(i8 zeroext %a, i8 zeroext %b) local_unnamed_addr #0 {
+entry:
+  %add = add i8 %b, %a
+  ret i8 %add
+}
+....
+
+`signedext/zeroext` が切り替わっていることが分かる。
+
+以上のClangへの変更により、次のように動くようになったfootnote:[ようやく
+「コンパイラ」という感じがしてきた。]。
+
+....
+$ cat foo.c
+int main()
+{
+    return 42;
+}
+
+$ bin/clang -c -O2 -target rv16k foo.c -o foo.o
+
+$ bin/llvm-objdump -d foo.o
+
+foo.o:	file format ELF32-rv16k
+
+Disassembly of section .text:
+0000000000000000 main:
+       0:	08 78 2a 00 	li	a0, 42
+       4:	00 40 	jr	ra
+....
+
+== スタック経由の引数渡しに対応する
+
+関数引数の数の制限を取り払い、レジスタに収まらないものはスタックを経由して渡す。
+
+RISC Vでは、TableGenが生成する呼び出し規則解決のコードではRV32Iの
+呼び出し規則を達成できないため、新たにフルスクラッチで書き直している
+<<github_riscv-llvm_patch_25>>。
+
+`LowerFormalArguments` は `SelectionDAGISel::LowerArguments` から呼ばれる。
+これは `SmallVectorImpl<ISD::InputArg> Ins` を作るときにsplitのフラグを
+設定する。必要なレジスタ数は `TargetLowering::getNumRegisters` によって見積もられる。
+したがって `Ins` にはすでにsplitされた入力が保存されている。
+
+`CC_RISCV` は `ISD::InputArg` の内容を引数の順に受け取り、
+それをレジスタに保存する（／に保存されているfootnote:[`CC_RISCV` は
+`analyze{Input,Output}Args` を通して引数と戻り値の両方に
+対応している。]）かメモリに保存するかを決め `CCState::addLoc` を呼ぶ。
+このとき、複数の引数がまとめて一つの値を示す場合があるため、
+それを検知し処理する必要がある。2つに分かれている場合は
+各々をレジスタないしスタックに積む。それ以上に別れている場合は
+スタックにすべて積み、その先頭アドレスをレジスタないしスタックに積む。
+このアドレスのみを渡す手法は `CCValAssign::Indirect` に対応する。
+
+RV16KではLanaiに準じたナイーブな手法でスタックを使用する。すなわち
+2バイト毎に引数を区切り順にスタックに格納する。
+このためには `LowerFormalArguments/LowerCall` にてスタック上に
+領域が割り振られた場合に `DAG.getLoad/DAG.getStore` を使用して `load/store` 命令を
+出力する必要がある。また `LowerCall` における `store` 命令は互いに関係がなく
+順序に意味はないため `Chain` で結ぶことはせず `ISD::TokenFactor` で
+一つにまとめ挿入する。
+
+....
+/// TokenFactor - This node takes multiple tokens as input and produces a
+/// single token result. This is used to represent the fact that the operand
+/// operators are independent of each other.
+TokenFactor,
+....
+
+ここで `SDValue` まわりの疑問が出てきた。現状の `LowerCall` の最後には
+戻り値に `CopyFromReg` を適用するため次のようなコード片がある。
+
+....
+  // Copy all of the result registers out of their specified physreg.
+  for (auto &VA : RVLocs) {
+    // Copy the value out, gluing the copy to the end of the call sequence.
+    SDValue RetValue =
+        DAG.getCopyFromReg(Chain, DL, VA.getLocReg(), VA.getLocVT(), Glue);
+    Chain = RetValue.getValue(1);
+    Glue = RetValue.getValue(2);
+
+    InVals.push_back(Chain.getValue(0));
+  }
+....
+
+RISC Vでは最後を `InVals.push_back(RetValue)` と書き換えている。
+この意味を理解したい。
+
+上のコードは物理レジスタで戻される結果を仮想レジスタに引き込むための
+`CopyFromReg` ノードを作成するものである。実際にDAGを出力させると
+次のようになる。
+
+image::img/sdvalue_copyfromreg.png[]
+
+コードと対照させると `DAG.getNode` はそのノードへの**最初の入力**を
+`SDValue` として返すことが分かる。これはしばしば `Chain` である。
+逆に言えば、子ノードの `Chain` を `DAG.getNode` に渡すことによって
+DAGをより根の方へ伸ばすことができる。
+
+その使われ方から分かるように `SDValue` は `SDNode` と添字を持つ。
+これによって「どのノードの何番目の入力か」を表している。
+
+....
+/// Unlike LLVM values, Selection DAG nodes may return multiple
+/// values as the result of a computation.  Many nodes return multiple values,
+/// from loads (which define a token and a return value) to ADDC (which returns
+/// a result and a carry value), to calls (which may return an arbitrary number
+/// of values).
+///
+/// As such, each use of a SelectionDAG computation must indicate the node that
+/// computes it as well as which return value to use from that node.  This pair
+/// of information is represented with the SDValue value type.
+///
+class SDValue {
+  friend struct DenseMapInfo<SDValue>;
+
+  SDNode *Node = nullptr; // The node defining the value we are using.
+  unsigned ResNo = 0;     // Which return value of the node we are using.
+....
+
+ただしここで「入力」とは「DAGの矢印が入ってくる方」という意味で用いている。
+実際のコード実行はDAGの葉の方から根の方へ、つまり矢印の方向とは逆の方向に
+行われることに注意が必要であるfootnote:[示した `SDValue` クラスの定義に付された
+コメントで `return value to use from that node` という書かれ方がされているのは
+このためであると推察される。]。
+
+ここで `SDValue::getValue` の定義を見ると次のようになっている。
+
+....
+  SDValue getValue(unsigned R) const {
+    return SDValue(Node, R);
+  }
+....
+
+よって `getValue` が返す `SDValue` は、そのインスタンスが持つノードの
+**兄弟ノード**であるfootnote:[`getValue` と言われるとなんとなく親ノードを指すような
+気がしてしまうのは私だけだろうか。]。
+
+さてここで再び `LowerCall` のコードを抜粋する。
+
+....
+SDValue RetValue =
+    DAG.getCopyFromReg(Chain, DL, VA.getLocReg(), VA.getLocVT(), Glue);
+Chain = RetValue.getValue(1);
+Glue = RetValue.getValue(2);
+
+InVals.push_back(Chain.getValue(0));
+....
+
+以上の調査から `Chain` は `RetValue` が指すノードの2番めの入力を表していることが
+分かる。また `Chain.getValue(0)` は `Chain` が指すノードの0番目の入力を表し、
+それはとりもなおさず `RetValue` である。
+したがって `InVals.push_back(Chain.getValue(0));` を
+`InVals.push_back(RetValue);` に書き換えても何ら問題はない。
+
+== `HLT` 擬似命令を追加する
+
+RV16Kv2には明示的な `hlt` 命令が存在しないが、実用的なプログラムを書く上ではかかせない。
+RV16Kv2実行時には必ず動作するサイクル数が指定されるfootnote:[準同型暗号上で動く
+プロセッサでは、レジスタやメモリその他全てのデータが暗号化されているため、
+外から終了条件を判定することができない。そのため、プロセッサを動作させるサイクル数
+を予め指定することで有限時間で終了することを保証する。もちろん、
+そのクロック数までに計算が終わらなければ、正しい結果は得られない。]ため、
+結局 `hlt` は無限ループと対応付ければ良いことが分かる。
+
+このためにまず `HLT` 擬似命令をTableGenに追加し、
+これを `encodeInstruction` で `j -2` footnote:[`j` 命令は `pc` を `pc + imm + 2` に
+更新する。従って自分自身にジャンプするためには `-2` を `imm` として指定する
+必要がある。]に展開する。こうすることによって
+アセンブリ上で `hlt` 擬似命令を使用することができる。
+なおこの手法はRISC Vの `PseudoCALL` と同じである<<llvm_phabricator-d45859>>。
+
+ここで `PseudoHLT` に `isCodeGenOnly = 0` を指定した上で `AsmString` を
+上書きしなければ、アセンブリ中の `hlt` がパーズされないことに注意が必要である。
+
+== 実行可能ファイルを作る
+
+lld<<llvm-lld>>footnote:[LLVMが作成しているリンカ。GNU ldやgoldよりも動作速度が速い・
+コードベースが簡素化されている・新しいターゲットの追加が容易などの利点を有する<<note-n9948f0cc3ed3>>。]
+に変更を加えてRV16Kのオブジェクトファイルから実行可能ファイルを
+生成するようにする。RISC Vのlld対応<<llvm_phabricator-d39322>>や
+Cpu0のlld対応<<cpu0-lld>>が参考になる。
+またLLVM Cauldron 2016において"How to add a new target to LLD"と
+銘打たれた講演があり、YouTubeで公開されている
+<<youtube-how_to_add_a_new_target_to_lld>><<llvm-smith_newlldtargetpdf>>。
+
+=== ELFのセクション構造を考える
+
+image::img/elfmap.png[]
+
+ここでRV16KのアーキテクチャとELFのセクション構造を厳密に考える必要が出てきた。
+すなわちRV16KはROMとRAMの両方を持つアーキテクチャであり、プログラム部分（ `.text` セクション）は
+ROMに配置し、データ部分（ `.data` や `.rodata` セクションfootnote:[`.rodata` セクションは
+実行中変更されることがないためROMで良いように思われるが、そもそもRV16Kでは
+ROMに配置されたデータにアクセスする方法がないため、実行中参照されるデータは
+すべてRAMに置かなければいけない。]）はRAMに配置しなければならない。
+すなわちRV16Kでは**考慮するべきアドレス空間が2つある**。しかしELFはこのような構造に
+対応しておらずfootnote:[多分。ほんまか？　要調査；TODO]一つの32bit仮想
+アドレス空間footnote:[一般には、ヘッダの作り方により64bitアドレス空間でもあり得る。]
+を持つのみである。
+そこでRV16KではELFにおける仮想アドレス空間のうち `0x00000000` から `0x0000FFFF` を
+ROMの領域（すなわち `.text` の領域）としfootnote:[実はエントリポイントが `0` はELFファイルが
+エントリポイントを保持しないことを意味する<<man-elf>>ため、この設計は
+若干危うい。RV16Kの使われ方からは問題ないはずだが、要調査；TODO]、
+`0x00010000` から `0x0001FFFF` をRAMの領域とする。
+これにより後々ELFからROM/RAM用のバイナリを切り出すことが容易となるfootnote:[`objcopy` などが使える？
+　要調査；TODO]。
+
+問題は、このようなアドレス配置でリンカのrelocationが正しく動作するかである。
+まずPC相対のrelocationを考えよう。例えば `jal` 命令はリンク時に関数へのPC相対アドレスを
+計算し当該箇所に埋め込む必要がある。指し示す関数と `jal` 命令は両者ともにROM上・ `.text` 上にある。
+ここで、仮想アドレスにおいて0番地から始まる `.text` のデータはそのままROMの0番地から
+配置されるfootnote:[これは（暗黙の）仮定。]ため、
+`.text` 中でのPC相対アドレスとROM上でのPC相対アドレスは一致する。
+したがって問題ない。
+
+次に絶対値によるrelocationを考える。例えばグローバル変数 `hoge` を `lw` 命令を用いて読み込む
+場合、 `hoge` のアドレスはRAM上の絶対アドレスによって指定される。
+ここで `hoge` は `0x0001xxxx` のようなアドレスをリンカによって
+指定されるfootnote:[`.data` セクションが `0x00010000` から始まるとしたため。]。
+これは正しいROM上の絶対アドレスではないfootnote:[そもそもこの値は32bitのため
+`lw` がオペランドとする16bitのスペースに書き込むことができない。]。
+そこで下位16bitのみを有効なアドレスとみなし、この値をELFファイルに書き込む。
+
+以上から、ROMとRAMの両方にvalidなアドレスをリンカの再配置機構を使用して
+得られることが分かった。
+
+=== LLDにRV16Kターゲットを追加する
+
+`lld/ELF/Arch/RV16K.cpp` ファイルを追加し `getRV16KTargetInfo` 関数を
+追加する。これはこのファイル中で定義する `RV16K` クラスのインスタンスを返す。
+`RV16K` クラスは `TargetInfo` クラスを継承し `relocateOne` と `getRelExpr` 関数を
+オーバーライドする。
+`relocateOne` は再配置処理の本体で、再配置のタイプ（ `R_RV16K_16` など）
+に応じて値の書き込みを行う。
+このときに書き込む値はLLD側から与えられる。その値の種類（絶対値かPC相対かなど）を
+指定するために `RV16K::getRelExpr` を記述するfootnote:[多分。記述と処理からの
+類推。要確認；TODO]。
+
+RV16Kが使用する再配置の種類は既存のものばかりで、それほど困難ではない。
+逆に独自の再配置タイプを作成する場合はRISC Vの対応<<llvm_phabricator-d39322>>が
+参考になりそうだ。
+
+さてELFの再配置情報には `.rel` と `.rela` の2種類の形式があり、
+どちらを利用するかはABIによって決まっている。LLDでは `Driver.cpp` において
+次のようにハードコーディングされている。
+
+....
+// ELF defines two different ways to store relocation addends as shown below:
+//
+//  Rel:  Addends are stored to the location where relocations are applied.
+//  Rela: Addends are stored as part of relocation entry.
+//
+// In other words, Rela makes it easy to read addends at the price of extra
+// 4 or 8 byte for each relocation entry. We don't know why ELF defined two
+// different mechanisms in the first place, but this is how the spec is
+// defined.
+//
+// You cannot choose which one, Rel or Rela, you want to use. Instead each
+// ABI defines which one you need to use. The following expression expresses
+// that.
+Config->IsRela = M == EM_AARCH64 || M == EM_AMDGPU || M == EM_HEXAGON ||
+                 M == EM_PPC || M == EM_PPC64 || M == EM_RISCV ||
+                 M == EM_X86_64;
+....
+
+LLVMバックエンド のレベルでは `.rel` と `.rela` のいずれを使用するかは
+`MCELFObjectTargetWriter` の第四引数に `false/true` のいずれを
+渡すかに対応している。
+
+....
+RV16KELFObjectWriter::RV16KELFObjectWriter(uint8_t OSABI)
+    : MCELFObjectTargetWriter(false, OSABI, ELF::EM_RV16K,
+                              /*HasRelocationAddend*/ true) {}
+....
+
+RV16Kv2では `.rela` を使用するfootnote:[今決めた。]ので `true` と
+なっている。したがってLLDの当該箇所も更新する必要がある。
+
+その他RV16Kを認識させるために `Driver.cpp` と `Target.cpp` を修正する。
+
+コンパイルのために `cmake -DLLVM_ENABLE_PROJECTS="lld;clang"` として
+再コンパイルしようとするとうまくいかない。途中のproject追加は対応していないようだ？
+footnote:[そんなわけはないと思うので要調査；TODO]とりあえずスクラッチから
+lldを含めたビルドを行う。
+
+具体的に実行可能ファイルを作成するために
+エントリポイント `_start` をアセンブリで作成し `runtime.s` という
+名前で保存する。中身は次のように `main` を呼出した後 `hlt`
+するfootnote:[コマンドライン引数などを実装すればここで処理を行う必要がある。]。
+
+....
+.global _start
+_start:
+	jal main
+	hlt
+....
+
+これをコンパイルしてオブジェクトファイル `runtime.o` とし、
+`main` 関数を含む適当なオブジェクトファイル `foo.o` と次のようにリンクする。
+
+....
+$ bin/ld.lld -Ttext=0 runtime.o foo.o -o foo.exe
+....
+
+LLDのAVRのターゲットのコメントに書かれているように、
+`-Ttext=0` を指定することで `.text` セクションをアドレス `0x0` に
+配置することができる。これは `llvm-readobj` を利用して確かめられる。
+
+....
+$ bin/llvm-readobj -a foo.exe | pbcopy
+
+File: foo.exe
+Format: ELF32-rv16k
+Arch: rv16k
+AddressSize: 32bit
+LoadName:
+ElfHeader {
+  Ident {
+    Magic: (7F 45 4C 46)
+    Class: 32-bit (0x1)
+    DataEncoding: LittleEndian (0x1)
+    FileVersion: 1
+    OS/ABI: SystemV (0x0)
+    ABIVersion: 0
+    Unused: (00 00 00 00 00 00 00)
+  }
+  Type: Executable (0x2)
+  Machine: EM_RV16K (0xF6)
+  Version: 1
+  Entry: 0x0
+  ProgramHeaderOffset: 0x34
+  SectionHeaderOffset: 0x20A8
+  Flags [ (0x0)
+  ]
+  HeaderSize: 52
+  ProgramHeaderEntrySize: 32
+  ProgramHeaderCount: 2
+  SectionHeaderEntrySize: 40
+  SectionHeaderCount: 6
+  StringTableSectionIndex: 4
+}
+（以下略）
+....
+
+テストを追加する。 `lld/test/ELF/basic-rv16k.s` というファイルを作り記述する。
+Sparcのものなどが参考になる。LLDのテストをする際には `ninja check-lld` とすればよいが、
+こうすると全てのテストが走ってしまう。RV16Kに限って実行するには
+次のようにすればよい。
+
+....
+$ bin/llvm-lit -as --filter 'rv16k' tools/lld/test
+....
+
+しかしコマンドを手で入力した結果と `llvm-lit` での実行結果が異なる。
+`tee` で内容を取得しテストの正解とした。
+原因不明。 `.comment` のサイズが異なるようだ？ TODO
+
+=== `clang` で実行可能ファイルを出力する
+
+必要な場合に `clang` が適切に `lld` を呼ぶようにする。
+`RV16KToolChain` の `protected` メンバ関数として `buildLinker` を
+オーバーライドし `tools::RV16K::Linker` クラスのインスタンスを
+返却する。次いで `tools::RV16K::Linker` を `GnuTool` を継承するクラスとして
+定義し、 `GnuTool` のコンストラクタに `ld.lld` を渡すfootnote:[このようにして
+リンカを指定するのは本来でないかもしれない。要調査；TODO]。
+`tools::RV16K::Linker::ConstructJob` ではリンカへのオプションなどを指定できる。
+`.text` セクションをアドレス `0x00000000` 番地に割り当てるように `-Ttext=0` を、
+`.data` セクションをアドレス `0x00010000` 番地に割り当てるように `-Tdata=0` を、
+またページサイズ単位のセクションアラインメントを無効化するために `--omagic`
+footnote:[デフォルトではldやlldはセクションをページサイズでアラインメントする。
+これは静的ライブラリをリンクするために必要なようだ<<man-xtensa_linux_gnu_ld>>が、
+一方で生成されるバイナリサイズを
+大きくしてしまう。そこで `--nmagic` を指定することでこれを無効化できる。しかしこのオプションは
+ldには存在するが、我々がベースにしているLLVM 8.0.0のlldには存在しない。
+そこで代わりに `--omagic` を指定する。
+これは `.text` に書き込み可フラグを立てるためセキュリティ上問題があるようだが、
+今回の使用方法では問題にならない<<github-blog_os-issues-370>>。なおLLVM 8.0.0の
+リリース後に `--nmagic` が追加されているようだ<<llvm_phabricator-d61688>>。要調査；TODO]を指定する
+footnote:[このようにLLDをコマンドとして使用するのは現在のLLDを設計した
+Rui Ueyamaさんの決定らしい<<note-n9948f0cc3ed3>>。]。
+
+以上の設定により次のように実行ファイルが生成されるようになったfootnote:[ここで
+`runtime.s` と `foo.c` の順番を入れ替えるとentry pointの位置が変化する。
+ファイル名の順序が `.text` 中での順序を決定していると推察されるが、
+根拠がない。要調査；TODO]。
+
+....
+$ cat runtime.s
+.global _start
+_start:
+	jal main
+	hlt
+
+$ cat foo.c
+int main()
+{
+    return 42;
+}
+
+$ bin/clang -target rv16k runtime.s foo.c -o foo.exe
+
+$ bin/llvm-readelf -a foo.exe
+ELF Header:
+  Magic:   7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00
+  Class:                             ELF32
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0x0
+  Type:                              EXEC (Executable file)
+  Machine:                           RV16K
+  Version:                           0x1
+  Entry point address:               0x0
+  Start of program headers:          52 (bytes into file)
+  Start of section headers:          8360 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               52 (bytes)
+  Size of program headers:           32 (bytes)
+  Number of program headers:         2
+  Size of section headers:           40 (bytes)
+  Number of section headers:         6
+  Section header string table index: 4
+There are 6 section headers, starting at offset 0x20a8:
+
+Section Headers:
+  [Nr] Name              Type            Address  Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .text             PROGBITS        00000000 001000 000026 00  AX  0   0  4
+  [ 2] .comment          PROGBITS        00000000 002000 000028 01  MS  0   0  1
+  [ 3] .symtab           SYMTAB          00000000 002028 000040 10      5   2  4
+  [ 4] .shstrtab         STRTAB          00000000 002068 00002a 00      0   0  1
+  [ 5] .strtab           STRTAB          00000000 002092 000013 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), l (large)
+  I (info), L (link order), G (group), T (TLS), E (exclude), x (unknown)
+  O (extra OS processing required) o (OS specific), p (processor specific)
+
+There are no relocations in this file.
+
+Symbol table '.symtab' contains 4 entries:
+   Num:    Value  Size Type    Bind   Vis      Ndx Name
+     0: 00000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: 00000000     0 FILE    LOCAL  DEFAULT  ABS foo.c
+     2: 00000000     0 NOTYPE  GLOBAL DEFAULT    1 _start
+     3: 00000008    30 FUNC    GLOBAL DEFAULT    1 main
+UnwindInfo not implemented.
+
+Elf file type is EXEC (Executable file)
+Entry point 0x0
+There are 2 program headers, starting at offset 52
+
+Program Headers:
+  Type           Offset   VirtAddr   PhysAddr   FileSiz MemSiz  Flg Align
+  LOAD           0x001000 0x00000000 0x00000000 0x01000 0x01000 R E 0x1000
+  GNU_STACK      0x000000 0x00000000 0x00000000 0x00000 0x00000 RW  0x0
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     .text
+   01
+Version symbols {
+}
+SHT_GNU_verdef {
+}
+SHT_GNU_verneed {
+}
+There are no section groups in this file.
+
+$ ~/workspace/rv16k-sim/main foo.exe 20
+0000 0073
+0002 0600
+0004 0052
+0006 FEFF
+0008 C1F2
+000A 2192
+000C 0200
+000E 12E0
+0010 42F2
+0012 0878
+0014 0000
+0016 8292
+0018 FCFF
+001A 0878
+001C 2A00
+001E 12B2
+0020 0200
+0022 41F2
+0024 0040
+
+Inst:JAL PC <= 0x0002 Reg x0 <= 0x0004 PC <= 0x0008 FLAGS(SZCV) <= 0000
+Inst:ADDI Reg x1 <= 0x01FA PC <= 0x000A FLAGS(SZCV) <= 0000
+Inst:SW PC <= 0x000C DataRam[0x01FC] <= 0x0000 DataRam[0x01FD] <= 0x0000 PC <= 0x000E FLAGS(SZCV) <= 0010
+Inst:MOV Reg x2 <= 0x01FA PC <= 0x0010 FLAGS(SZCV) <= 0000
+Inst:ADDI Reg x2 <= 0x01FE PC <= 0x0012 FLAGS(SZCV) <= 0010
+Inst:LI PC <= 0x0014 Reg x8 <= 0x0000 PC <= 0x0016 FLAGS(SZCV) <= 0100
+Inst:SW PC <= 0x0018 DataRam[0x01FA] <= 0x0000 DataRam[0x01FB] <= 0x0000 PC <= 0x001A FLAGS(SZCV) <= 0000
+Inst:LI PC <= 0x001C Reg x8 <= 0x002A PC <= 0x001E FLAGS(SZCV) <= 0000
+PC <= 0x0020 Inst:LW Reg x2 <= 0x0000 PC <= 0x0022 FLAGS(SZCV) <= 0010
+Inst:ADDI Reg x1 <= 0x01FE PC <= 0x0024 FLAGS(SZCV) <= 0010
+Inst:JR PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+Inst:J PC <= 0x0006 PC <= 0x0004 FLAGS(SZCV) <= 0000
+x0=4	x1=510	x2=0	x3=0	x4=0	x5=0	x6=0	x7=0	x8=42	x9=0	x10=0	x11=0	x12=0	x13=0	x14=0	x15=0
+....
+
+== `lw/sw` の代わりに `lwsp/swsp` 命令を使う
+
+現在 `lw/sw` を用いて行っているスタックの読み書きを、適用できる場合に限って `lwsp/swsp` に変更する。
+結局スタックにアクセスする際には `eliminateFrameIndex` が呼ばれるため、
+ここでi) `lw/sw` を使用しており ii) オペランドが `sp` で、かつ iii)
+即値が9bitに収まるのであれば、これを `lwsp/swsp` に各々変換する。
+
+`eliminateFrameIndex` で命令の変更を行うバックエンドは少ないが、footnote:[驚いたことにx86では行われていない。
+x86ではアセンブリレベルでは即値に応じて命令を変更する必要がないからかもしれない。要調査；TODO]。
+例えばSparcでは行われている。それによれば `MI.setDesc` を使用して
+命令の変更を行えば良いようだ。
+
+似たような変更はRISC VのRV32C対応でも行われている。ただしこちらの手法はより大胆で、
+TableGen本体に手をいれることで、TableGenファイルにおいて
+RV32Iその他の命令とRV32Cとの対応を取れるようにしている。
+
+結局RV16Kでは次のようになった。
+
+....
+  // Use lwsp whenever possible.
+  if (MI.getOpcode() == RV16K::LW && FrameReg == RV16K::X1 &&
+      isShiftedUInt<8, 1>(Offset)) {
+    const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+    MI.setDesc(TII.get(RV16K::LWSP));
+  }
+
+  // Use swsp whenever possible.
+  if (MI.getOpcode() == RV16K::SW && FrameReg == RV16K::X1 &&
+      isShiftedUInt<8, 1>(Offset)) {
+    const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+    MI.setDesc(TII.get(RV16K::SWSP));
+  }
+....
+
+ちなみにここで `isShiftedUInt<9, 1>` などとしてもエラーにはならない。
+命令選択はすでに終わっておりfootnote:[終わっていなければ `MachineInstr` が
+引数として渡されることはない。またframe index ("abstract stack location references")
+の削除は関数プロローグ・エピローグの挿入と同時に行われ
+るようだ<<llvm-code_generator>>。]、
+オペランドの幅を指定するのは命令選択に使用されるTableGenファイルを除いて
+他にないからである。従ってそのまま `lwsp a0, 512(sp)` などと平気で
+出力される。ではオブジェクトファイルはどうかというと、
+こちらでもエラーは出力されず、逆アセンブルすると `lwsp a0, 0(sp)` と
+なっていることが分かる。これはTableGenファイル中の `Inst` の指定が
+bitの対応のみになっていることに起因するのだろう。
+これに対して有効な手立てがあるかはちょっと分からない。TODO
+footnote:[例えばRISC Vのバックエンドに対して同様の細工をして試してみるなど。]
+仕方がないので、とりあえずテストで正しい挙動となることを保証することに
+するfootnote:[本当はコンパイル時にｼｭｯとしてほしい。]。
+
+ところがこれでは関数の引数をスタックに積む際には適用されないことが分かった。
+この場合は `DAG.getStore` を利用してSelectionDAGレベルでspに対するstoreが
+発行され、frame indexはそのオペランド中に含まれないためと推察される（TODO）。
+そこで次のようにパターンを追加した。
+
+....
+def : Pat<(store GPR:$rs2, SP:$rs1), (SWSP GPR:$rs2, SP:$rs1, 0)>;
+def : Pat<(store GPR:$rs2, (add SP:$rs1, uimm9_lsb0:$imm)),
+          (SWSP GPR:$rs2, SP:$rs1, uimm9_lsb0:$imm)>;
+....
+
+これを普通の `store` の上に置くと失敗するテストが発生した（ `blockaddress.ll` ）。
+詳細不明。TODO `-debug` を付けて確認すると `SP` のレジスタが足りなくなっているような
+雰囲気？ `sp` をスタックにスピルしてロードして……みたいなことをやっている気がする。
+どうも `a0` を直接 `lw` で読む代わりに、
+`a0` を `sp` に入れて `swsp` を実行するようなアセンブリが吐かれている。恐ろしや。
+しかしこれは命令数的に不利だと思うのだが……。
+
+しかしこの手法では、新たにload/storeを挟むたびにlwsp/swspのことを
+考える必要があり、少々面倒である。lwsp/swspは条件が揃えば必ずlw/swに
+書き換わるべき命令なのだから、もっと後ろ、すなわち
+frame index eliminationが終わったあとにpeephole最適化footnote:[というよりただの
+置換だが。]にて処理すべきである。このような場合に対応するためにLLVMバックエンドには
+"Late Machine Code Optimizations"がある<<llvm-code_generator>>が、
+公式ドキュメントには"To Be Written"となっていて情報がない。
+
+おそらくこれは `MachineFunctionPass` を継承したような最適化に対応すると
+推察される（TODO）。これは `Target/RV16K` 内にて定義し、
+`RV16KPassConfig` にて `addPreEmitPass2` などをオーバライドしたうえで
+`addPass` を呼出し利用する<<llvm_phabricator-d47882>>。
+
+....
+  /// Methods with trivial inline returns are convenient points in the common
+  /// codegen pass pipeline where targets may insert passes. Methods with
+  /// out-of-line standard implementations are major CodeGen stages called by
+  /// addMachinePasses. Some targets may override major stages when inserting
+  /// passes is insufficient, but maintaining overriden stages is more work.
+  ///
+
+  /// addPreISelPasses - This method should add any "last minute" LLVM->LLVM
+  /// passes (which are run just before instruction selector).
+  virtual bool addPreISel() {
+    return true;
+  }
+
+  /// addMachineSSAOptimization - Add standard passes that optimize machine
+  /// instructions in SSA form.
+  virtual void addMachineSSAOptimization();
+
+  /// Add passes that optimize instruction level parallelism for out-of-order
+  /// targets. These passes are run while the machine code is still in SSA
+  /// form, so they can use MachineTraceMetrics to control their heuristics.
+  ///
+  /// All passes added here should preserve the MachineDominatorTree,
+  /// MachineLoopInfo, and MachineTraceMetrics analyses.
+  virtual bool addILPOpts() {
+    return false;
+  }
+
+  /// This method may be implemented by targets that want to run passes
+  /// immediately before register allocation.
+  virtual void addPreRegAlloc() { }
+
+  /// createTargetRegisterAllocator - Create the register allocator pass for
+  /// this target at the current optimization level.
+  virtual FunctionPass *createTargetRegisterAllocator(bool Optimized);
+
+  /// addFastRegAlloc - Add the minimum set of target-independent passes that
+  /// are required for fast register allocation.
+  virtual void addFastRegAlloc(FunctionPass *RegAllocPass);
+
+  /// addOptimizedRegAlloc - Add passes related to register allocation.
+  /// LLVMTargetMachine provides standard regalloc passes for most targets.
+  virtual void addOptimizedRegAlloc(FunctionPass *RegAllocPass);
+
+  /// addPreRewrite - Add passes to the optimized register allocation pipeline
+  /// after register allocation is complete, but before virtual registers are
+  /// rewritten to physical registers.
+  ///
+  /// These passes must preserve VirtRegMap and LiveIntervals, and when running
+  /// after RABasic or RAGreedy, they should take advantage of LiveRegMatrix.
+  /// When these passes run, VirtRegMap contains legal physreg assignments for
+  /// all virtual registers.
+  virtual bool addPreRewrite() {
+    return false;
+  }
+
+  /// This method may be implemented by targets that want to run passes after
+  /// register allocation pass pipeline but before prolog-epilog insertion.
+  virtual void addPostRegAlloc() { }
+
+  /// Add passes that optimize machine instructions after register allocation.
+  virtual void addMachineLateOptimization();
+
+  /// This method may be implemented by targets that want to run passes after
+  /// prolog-epilog insertion and before the second instruction scheduling pass.
+  virtual void addPreSched2() { }
+
+  /// addGCPasses - Add late codegen passes that analyze code for garbage
+  /// collection. This should return true if GC info should be printed after
+  /// these passes.
+  virtual bool addGCPasses();
+
+  /// Add standard basic block placement passes.
+  virtual void addBlockPlacement();
+
+  /// This pass may be implemented by targets that want to run passes
+  /// immediately before machine code is emitted.
+  virtual void addPreEmitPass() { }
+
+  /// Targets may add passes immediately before machine code is emitted in this
+  /// callback. This is called even later than `addPreEmitPass`.
+  // FIXME: Rename `addPreEmitPass` to something more sensible given its actual
+  // position and remove the `2` suffix here as this callback is what
+  // `addPreEmitPass` *should* be but in reality isn't.
+  virtual void addPreEmitPass2() {}
+....
+
+`RV16KUseLWSPSWSP` という名前で実際にパスを作る。 `RISCVMergeBaseOffset` が
+参考になる。 `MachineFunction` の中に `MachineBasicBlock` があり、
+その中に `MachineInstr` がある。iteratorが実装されているためrange-based forが
+使える。 `INITIALIZE_PASS` の第二引数はコマンドラインでの引数。第三引数は名前。
+
+その後 `RV16KPassConfig::addPreEmitPass` から `addPass` を呼ぶようにした。
+正直どれから呼べばどの順序で呼ばれるのかよくわからないが、
+`addPreEmitPass` と `addPreEmitPass2` が `MCInst` にlowerされる直前に
+相次いで呼ばれるという認識。要調査；TODO
+
+image::img/gemba_neko.jpg[]
+
+テストを追加する。
+
+== 続・ `FrameIndex` をlowerする
+
+バグを泳がせた結果、`alloca` で確保したスタック領域へのポインタを
+関数の引数に渡すようなLLVM IRを入力すると `RV16KDAGToDAGISel::Select` に
+`ISD::FrameIndex` が来ることが分かった。なるほど然り。
+
+....
+declare i16 @bar(i16*)
+
+define i16 @foo() {
+  %1 = alloca i16
+  %2 = call i16 @bar(i16* %1)
+  ret i16 %2
+}
+....
+
+これに対応する。オペランドにframe indexが現れた際は `TargetFrameIndex` に
+変換しつつそのままオペランドとして扱った。しかし今回はframe indexが
+単体で与えられているため、そのままでは `MachineDAG` のノードとして
+扱えないfootnote:[`TargetFrameIndex` は命令のオペランドにはなるが、命令そのものには
+ならないため、という推論。TODO. ちょうど即値のmaterializeと似ているかもしれない]。
+そこで適当な命令とセットにして `Select` の
+結果とする必要がある。ここでframe indexの実体は「レジスタ＋即値」である
+ことに注意する。すなわち `eliminateFrameIndex` で扱うことができるような
+形式でなければならない。RISC-Vでは `addi` がこれに該当するが、
+RV16Kではビット幅が狭く現実的ではない。そこで、とりあえず `Select` では
+`addi` を割り振り、後から `eliminateFrameIndex` で調整する手法を採用する。
+そこで<<github_riscv-llvm_patch_22>>を参考にし
+次のようにコードを書いた。
+
+....
+  if (Node->getOpcode() == ISD::FrameIndex) {
+    SDLoc DL(Node);
+    SDValue Imm = CurDAG->getTargetConstant(0, DL, MVT::i16);
+    int FI = dyn_cast<FrameIndexSDNode>(Node)->getIndex();
+    EVT VT = Node->getValueType(0);
+    SDValue TFI = CurDAG->getTargetFrameIndex(FI, VT);
+    ReplaceNode(Node,
+                CurDAG->getMachineNode(RV16K::ADDI, DL, VT, TFI, Imm));
+    return;
+  }
+....
+
+するとエラーが出た。
+
+....
+$ ~/workspace/llvm-project-build/bin/llc -mtriple=rv16k -verify-machineinstrs < 0003.ll
+	.text
+	.file	"<stdin>"
+
+# After Instruction Selection
+# Machine code for function foo: IsSSA, TracksLiveness
+Frame Objects:
+  fi#0: size=2, align=2, at location [SP]
+
+bb.0 (%ir-block.0):
+  ADJCALLSTACKDOWN 0, 0, implicit-def dead $x1, implicit $x1
+  %0:gpr = ADDI %stack.0, 0, implicit-def dead $flags
+  $x8 = COPY %0:gpr
+  JAL @bar, <regmask $x0 $x2 $x3 $x4 $x5 $x6 $x7>, implicit-def dead $x0, implicit $x8, implicit-def $x1, implicit-def $x8
+  ADJCALLSTACKUP 0, 0, implicit-def dead $x1, implicit $x1
+  %1:gpr = COPY $x8
+  $x8 = COPY %1:gpr
+  PseudoRET implicit $x8
+
+# End machine code for function foo.
+
+*** Bad machine code: Tied use must be a register ***
+- function:    foo
+- basic block: %bb.0  (0x5647e963da08)
+- instruction: %0:gpr = ADDI %stack.0, 0, implicit-def dead $flags
+- operand 1:   %stack.0
+LLVM ERROR: Found 1 machine code errors.
+....
+
+どうやら `ADDI` の2オペランド制約（ `Constraints = "$rd = $rd_w"` ）
+を満たすことが出来ないようだfootnote:[`ADDI` の代わりに
+`Constraints` のみを外した `ADDIhoge` を作成して試したところ
+エラーは発生しなかった。またAVRのバックエンドのコメントには"This is actually
+"load effective address" of the stack slot instruction.
+We have only two-address instructions, thus we need to expand it into move + add."
+とあるので、おそらくこの理解で正しい。]。
+そこで同様の問題を抱えるAVRのバックエンドを参考にして `FRMIDX` という擬似命令を作成し、
+これを `addi` の代わりに取り回すことにする。
+
+まず次のように `FRMIDX` を定義し
+
+....
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0, Defs = [FLAGS] in
+def FRMIDX : Pseudo<(outs GPR:$rd), (ins GPR:$rs, simm16:$imm), []>;
+....
+
+これを `Select` で作成する。
+
+....
+  if (Node->getOpcode() == ISD::FrameIndex) {
+    // Convert the frameindex into a temp instruction that will hold the
+    // effective address of the final stack slot.
+    int FI = cast<FrameIndexSDNode>(Node)->getIndex();
+    SDValue TFI = CurDAG->getTargetFrameIndex(FI, MVT::i16);
+
+    CurDAG->SelectNodeTo(Node, RV16K::FRMIDX, MVT::i16, TFI,
+                         CurDAG->getTargetConstant(0, SDLoc(Node), MVT::i16));
+    return;
+  }
+....
+
+なお `Pat` で `FRMIDX` を作成できないかとやってみたが上手く行かなかった。
+そもそもどのようなパターンにマッチさせればいいのか分からなかった。TODO
+
+ちなみにこの段階でアセンブリを出力させると空文字列で出力される。
+それはそうなのだが、擬似命令でもエラーが出ず出力されるのは意外footnote:[エラーにして
+ほしい。方法はないのか。TODO]。
+
+最後に `eliminateFrameIndex` で `FRMIDX` をトラップし、適切に処理する。
+4bit幅に収まる場合には `addi` が使えると思ったが、
+実際には `sp` を書き換えるのはまずいと判断し、
+どのような場合でも `li` と `mov` で取り扱うことにした。要検討。TODO
+
+AVRでは二命令目の最後のオペランドに `RegState::Dead` が適用されていた。
+この `RegState` の意味は `MachineOperand` クラスのコメントに詳しい。
+
+TableGenを使用した通常のパスでこれらの属性がどのように付与されるかは要調査；TODO
+
+....
+  /// TiedTo - Non-zero when this register operand is tied to another register
+  /// operand. The encoding of this field is described in the block comment
+  /// before MachineInstr::tieOperands().
+  unsigned TiedTo : 4;
+
+  /// IsDef - True if this is a def, false if this is a use of the register.
+  /// This is only valid on register operands.
+  ///
+  unsigned IsDef : 1;
+
+  /// IsImp - True if this is an implicit def or use, false if it is explicit.
+  /// This is only valid on register opderands.
+  ///
+  unsigned IsImp : 1;
+
+  /// IsDeadOrKill
+  /// For uses: IsKill - True if this instruction is the last use of the
+  /// register on this path through the function.
+  /// For defs: IsDead - True if this register is never used by a subsequent
+  /// instruction.
+  /// This is only valid on register operands.
+  unsigned IsDeadOrKill : 1;
+
+  /// See isRenamable().
+  unsigned IsRenamable : 1;
+
+  /// IsUndef - True if this register operand reads an "undef" value, i.e. the
+  /// read value doesn't matter.  This flag can be set on both use and def
+  /// operands.  On a sub-register def operand, it refers to the part of the
+  /// register that isn't written.  On a full-register def operand, it is a
+  /// noop.  See readsReg().
+  ///
+  /// This is only valid on registers.
+  ///
+  /// Note that an instruction may have multiple <undef> operands referring to
+  /// the same register.  In that case, the instruction may depend on those
+  /// operands reading the same dont-care value.  For example:
+  ///
+  ///   %1 = XOR undef %2, undef %2
+  ///
+  /// Any register can be used for %2, and its value doesn't matter, but
+  /// the two operands must be the same register.
+  ///
+  unsigned IsUndef : 1;
+
+  /// IsInternalRead - True if this operand reads a value that was defined
+  /// inside the same instruction or bundle.  This flag can be set on both use
+  /// and def operands.  On a sub-register def operand, it refers to the part
+  /// of the register that isn't written.  On a full-register def operand, it
+  /// is a noop.
+  ///
+  /// When this flag is set, the instruction bundle must contain at least one
+  /// other def of the register.  If multiple instructions in the bundle define
+  /// the register, the meaning is target-defined.
+  unsigned IsInternalRead : 1;
+
+  /// IsEarlyClobber - True if this MO_Register 'def' operand is written to
+  /// by the MachineInstr before all input registers are read.  This is used to
+  /// model the GCC inline asm '&' constraint modifier.
+  unsigned IsEarlyClobber : 1;
+
+  /// IsDebug - True if this MO_Register 'use' operand is in a debug pseudo,
+  /// not a real instruction.  Such uses should be ignored during codegen.
+  unsigned IsDebug : 1;
+....
+
+`Kill` はレジスタのuseのとき、 `Dead` はdefのとき用いられる。
+`Kill/Dead` のフラグがたったレジスタは、その後使用されないことを意味する。
+今回の場合 `FLAGS` がこの後で使用されることはないfootnote:[直観的にはそうだが
+形式的に証明できるかというと怪しい。TODO]ので `FLAGS` に `Dead` を適用する必要がある。
+
+なおbasic blockを前からではなく後ろから走査することで `Kill` フラグの有無に関わらず
+正しいレジスタ生存期間を算出できるfootnote:[これは `llvm::RegScavenger::scavengeRegister` の
+コメントからも示唆される。]。したがって `Kill` フラグをつけるか否かは任意であり、
+誤って `Kill` フラグが立つことによるバグの混入
+footnote:[passが重なると起こりやすいらしい<<llvm-welcome_to_the_back_end_2017>>。]
+を避けるためにも、新しく書くコードでは `Kill`
+を使用すべきでないらしい<<llvm-welcome_to_the_back_end_2017>>footnote:[しかしRISC-Vでは
+使用しているし良くわからない。TODO]。
+
+....
+$ cat 0003.ll
+declare i16 @bar(i16*)
+
+define i16 @foo() {
+  %1 = alloca i16
+  %2 = call i16 @bar(i16* %1)
+  ret i16 %2
+}
+
+$ ~/workspace/llvm-project-build/bin/llc -mtriple=rv16k -verify-machineinstrs -print-after=prologepilog < 0003.ll > /dev/null
+# *** IR Dump After Prologue/Epilogue Insertion & Frame Finalization ***:
+# Machine code for function foo: NoPHIs, TracksLiveness, NoVRegs
+Frame Objects:
+  fi#0: size=2, align=2, at location [SP-4]
+  fi#1: size=2, align=2, at location [SP-2]
+
+bb.0 (%ir-block.0):
+  $x1 = frame-setup ADDI $x1(tied-def 0), -4, implicit-def $flags
+  SW killed $x0, $x1, 2, implicit-def $flags
+  $x8 = LI 0, implicit-def dead $flags
+  $x8 = ADD killed $x8(tied-def 0), $x1, implicit-def dead $flags
+  JAL @bar, <regmask $x0 $x2 $x3 $x4 $x5 $x6 $x7>, implicit-def dead $x0, implicit $x8, implicit-def $x1, implicit-def $x8
+  $x0 = LW $x1, 2, implicit-def $flags
+  $x1 = frame-destroy ADDI $x1(tied-def 0), 4, implicit-def $flags
+  PseudoRET implicit $x8
+
+# End machine code for function foo.
+....
+
+`ADD` に `dead` がついていることが分かる。
+なお `implicit` というのはアセンブリ中（ `MCInst` 中）に表現されないということである。
+実際 `flags` は各命令において勝手に書き換えられ、勝手に使用されるため、
+明示的に表現することはない。また `tied` というのは2オペランド形式などにおいて
+読み込むレジスタと書き込むレジスタが
+一致することを意味している<<llvm-welcome_to_the_back_end_2017>>。
+上のコードにはないが `undef` はその入力レジスタの値自体は重要でないことfootnote:[例えば
+`eax` に `0` をいれるために `xor eax, eax` を実行するとき、
+`eax` に（もともと）何が入っているかは重要ではない。]を意味する。
+これらの `RegState` はレジスタの生存期間を算出するために用いられる。
+
+`Offset` が `0` のときは `mov` のみでよいので条件分岐しておく。
+
+ところでRISC-VやAVRがframeindexを取り回す方法と、x86やSparcのそれは
+明らかに異なる。RISC-Vではアドレスモードらしいモードが無いのに対し、
+Sparcでは `ADDRri` などが存在する。このあたりで `ISD::FrameIndex` を
+直接 `Select` で対応する必要があるか否かが決まっているようだが詳細不明。TODO
+
+== `Bcc` を導入する
+
+後に行う分岐解析では「ある分岐条件を逆向きにする」という処理を行う必要があるが、
+`CMP` と `Jcc` に分けていると、このとき `Jcc` の情報しか与えられず `CMP` への
+変更を加えることが出来ない。そこで `Jcc` と `CMP` をまとめて `Bcc` とした
+擬似命令を作成してレジスタ割り付けまでを行いfootnote:[分岐解析はレジスタ割り付け
+までに起こっているはずだと仮定している。TODO]、その後これを `CMP` と `Jcc` に
+伸長することにする。
+この方式ではRISC-Vの方法<<github_riscv-llvm_patch_17>>をそのまま適用することができる。
+
+しかし単発の `setcc` を上手く取り扱うことが出来ない。 `SelectCCrr` に変換すれば
+良いと思い次のように書いたが、パターンマッチに成功しない。
+
+....
+def : Pat<(seteq GPR:$lhs, GPR:$rhs),
+          (SelectCCrr GPR:$lhs, GPR:$rhs, SETEQ, (LI 0), (LI 1))>;
+....
+
+調査したが原因不明。何もわからない。TODO
+
+ところで
+
+....
+def : Pat<(SelectCC GPR:$lhs, GPR:$rhs, (i16 imm:$imm), GPR:$src, GPR:$src2),
+          (SelectCCrr GPR:$lhs, GPR:$rhs, i16imm:$imm, GPR:$src, GPR:$src2)>;
+....
+
+とは書けないらしい。 `imm` の部分が `li` からレジスタ渡しに
+変更されてしまう。 `Pseudo` の引数にパターンとして渡さないといけないようだ。
+どのような違いがあるのか全然分からない。TODO
+
+仕方が無いので `BR_CC` で実装することにする。
+`LowerBR_CC` で直接 `Bcc` を返すことができないかと試したが無理のようだ。
+`DAG.getNode` が引数に受け取るのはあくまで `SDValue` のための引数であって
+`MachineSDValue` ではない。ExpandやCustomの処理が終わった後に
+TableGenファイルをもとに命令選択が行われるのだから、当然といえば当然である。
+そこにフックしたければ `ComplexPattern` を使えということなのだろう。
+
+結局 i) `BR_CC` を `LowerOperation` でトラップして `RV16KISD::BR_CC` を作成し ii)
+TableGenファイルで `RV16KBrCC` を捕捉して擬似命令 `Bcc/BccI` とし iii)
+`RV16KInstrInfo::expandPostRAPseudo` でこれを `CMP` と `Jcc` に
+変換することにしたfootnote:[あちらこちらさまよって一日を費やしたわりには
+大したことの無い方法で収まりが付いた。]。
+
+== 分岐解析に対応する
+
+branch analysisに対応することで、分岐に関する種々の最適化を
+行うことができる。参考にするRISC-Vのパッチは<<github_riscv-llvm_patch_30>>。
+
+具体的には `RV16KInstrInfo::analyzeBranch` をオーバーライドし実装する。
+`TargetInstrInfo::analyzeBranch` には次のようにコメントがある。
+
+....
+  /// Analyze the branching code at the end of MBB, returning
+  /// true if it cannot be understood (e.g. it's a switch dispatch or isn't
+  /// implemented for a target).  Upon success, this returns false and returns
+  /// with the following information in various cases:
+  ///
+  /// 1. If this block ends with no branches (it just falls through to its succ)
+  ///    just return false, leaving TBB/FBB null.
+  /// 2. If this block ends with only an unconditional branch, it sets TBB to be
+  ///    the destination block.
+  /// 3. If this block ends with a conditional branch and it falls through to a
+  ///    successor block, it sets TBB to be the branch destination block and a
+  ///    list of operands that evaluate the condition. These operands can be
+  ///    passed to other TargetInstrInfo methods to create new branches.
+  /// 4. If this block ends with a conditional branch followed by an
+  ///    unconditional branch, it returns the 'true' destination in TBB, the
+  ///    'false' destination in FBB, and a list of operands that evaluate the
+  ///    condition.  These operands can be passed to other TargetInstrInfo
+  ///    methods to create new branches.
+  ///
+  /// Note that removeBranch and insertBranch must be implemented to support
+  /// cases where this method returns success.
+  ///
+  /// If AllowModify is true, then this routine is allowed to modify the basic
+  /// block (e.g. delete instructions after the unconditional branch).
+  ///
+  /// The CFG information in MBB.Predecessors and MBB.Successors must be valid
+  /// before calling this function.
+  virtual bool analyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,
+                             MachineBasicBlock *&FBB,
+                             SmallVectorImpl<MachineOperand> &Cond,
+                             bool AllowModify = false) const {
+    return true;
+  }
+....
+
+`MachineBasicBlock` の中身を調査し、分岐でbasic blockが終わっている場合には
+そのtrue/falseの際の分岐先を `TBB` と `FBB` に入れろということのようだ。
+なお `MachineBasicBlock *&` は「ポインタへの参照」を表す<<stackoverflow-5789806>>。
+機能を考えれば妥当だ。
+
+TableGenファイルで指定した `isBranch` などはここで使用されるようだ。
+例えば無条件ジャンプか否かは `MachineInstr::isUnconditionalBranch` で
+次のように判断される。
+
+....
+  /// Return true if this is a branch which always
+  /// transfers control flow to some other block.  The
+  /// TargetInstrInfo::AnalyzeBranch method can be used to get more information
+  /// about this branch.
+  bool isUnconditionalBranch(QueryType Type = AnyInBundle) const {
+    return isBranch(Type) & isBarrier(Type) & !isIndirectBranch(Type);
+  }
+....
+
+このあたりを見ながらTableGenファイルを書けば良いようだ。
+
+`analyzeBranch` ではおおよそ次のことをやっている。
+
+. 無条件分岐か間接分岐がある場合は、その後ろの命令は実行されないので消去するfootnote:[ここから `jalr` を間接分岐と呼ばないことが分かる。]。
+. basic blockを抜け出る命令が1つしかなく、それがbasic block最後の無条件分岐である場合は、その分岐先を `TBB` にセットして `false` を返す。
+. basic blockを抜け出る命令が1つしかなく、それがbasic block最後の条件分岐命令である場合は、その分岐先を `TBB` にセットして `false` を返す。
+. basic blockを抜け出る命令が2つあり、それがbasic block最後の「条件分岐命令＋無条件分岐命令」ならば、前者の分岐先を `TBB` に、後者の分岐先を `FBB` にセットして `false` を返す。
+. 上記以外は `true` を返し、解析が不可能であることを示す。
+
+LanaiとSparcのものも見たが、RISC-Vと同様のことをやっている気がするfootnote:[同じことをやるならLLVM core側で対応してくれればいいのに。]。
+なお `MachineBasicBlock` の最後には `isTerminator` がついた命令が来ることが
+制約として課されているが、これは複数個あっても良い<<llvm-welcome_to_the_back_end_2017>>。
+これによって条件分岐（ `true` ならこちらに飛び、 `false` なら別のところに飛ぶ）
+が自然に表現できる。
+
+引数の `Cond` に設定したオペランドは `insertBranch` や `reverseBranchCondition`
+に付加情報として渡される。
+
+`insertBranch` は引数で指示された分岐命令を挿入する。
+そのときに `Cond` に指定した値が同時に渡される。RV16Kでは「どの種類の分岐なのか」
+が分かればよいのでopcodeを `Cond` に `push_back` しておく。
+
+`removeBranch` では `MBB` 末尾にある分岐命令を削除する。
+「条件分岐命令＋無条件分岐命令」の場合はその両方を削除する。
+
+....
+  /// Remove the branching code at the end of the specific MBB.
+  /// This is only invoked in cases where AnalyzeBranch returns success. It
+  /// returns the number of instructions that were removed.
+  /// If \p BytesRemoved is non-null, report the change in code size from the
+  /// removed instructions.
+  virtual unsigned removeBranch(MachineBasicBlock &MBB,
+                                int *BytesRemoved = nullptr) const {
+    llvm_unreachable("Target didn't implement TargetInstrInfo::removeBranch!");
+  }
+
+  /// Insert branch code into the end of the specified MachineBasicBlock. The
+  /// operands to this method are the same as those returned by AnalyzeBranch.
+  /// This is only invoked in cases where AnalyzeBranch returns success. It
+  /// returns the number of instructions inserted. If \p BytesAdded is non-null,
+  /// report the change in code size from the added instructions.
+  ///
+  /// It is also invoked by tail merging to add unconditional branches in
+  /// cases where AnalyzeBranch doesn't apply because there was no original
+  /// branch to analyze.  At least this much must be implemented, else tail
+  /// merging needs to be disabled.
+  ///
+  /// The CFG information in MBB.Predecessors and MBB.Successors must be valid
+  /// before calling this function.
+  virtual unsigned insertBranch(MachineBasicBlock &MBB, MachineBasicBlock *TBB,
+                                MachineBasicBlock *FBB,
+                                ArrayRef<MachineOperand> Cond,
+                                const DebugLoc &DL,
+                                int *BytesAdded = nullptr) const {
+    llvm_unreachable("Target didn't implement TargetInstrInfo::insertBranch!");
+  }
+....
+
+`Bcc/BccI` に対して `reverseBranchCondition` が作用するようにするfootnote:[以前の
+設計では `Bcc` を導入していなかったため
+`reverseBranchCondition` の実装で問題が発生した。RV16Kには条件分岐の逆の命令は
+存在しないのである。これは本質的に `CMP` と `Jcc` を分けていることに起因する。]。
+
+実はregister allocationのあとにもbranch analysisが実行されるため
+上の設計ではエラーが出るfootnote:[悲しい。]。
+仕方がないのでRISC-Vのatomic命令を見習い<<llvm_phabricator-d47882>>
+コードが出力される直前に
+変換することにするfootnote:[peephole最適化などを行うことができないため、
+最適化の観点からは好ましくない。TODO]。
+
+と思ったらこれでもだめだった。仕方がないので `MCInst` に変換する直前で
+行うことにする。複数命令に展開されるため `AsmPrinter` の方に
+変更を加える。
+
+ここまでpeephole最適化footnote:[LLVMには実際 `CMP` と `SUB` が重複した際に
+これを最適化するようなpeephole最適化の `MachineFunctionPass` である
+`lib/CodeGen/PeepholeOptimizer.cpp` が存在する。]
+のことを気にしてきたが、よく考えると
+`CMP+Jcc` のpeephole最適化とbranch analysisは不可分なのではないか。
+結局peephole最適化と `Bcc` のいずれか一方のみしか対応できないのではないか
+と思われるfootnote:[というかイソップ寓話的にそう思い込んだともいう。]。TODO
+
+しかしこれもつらい。基本的に `AsmPrinter` は一命令を複数の命令に展開することを
+想定していないfootnote:[というかそもそも命令を置き換えるコードを手で書くこと
+自体が想定されていないような気がする。]。せっかくPassとして整備したのだから、
+Passとして追加したい。
+
+結局問題になっているのは `CMP+Jcc` に置換された後に `analyzeBranch` が
+実行されてしまうことである。エラーログを見ると、どうやら `-verify-machineinstrs`
+がこれを実行しているようだ。
+
+`TargetPassConfig::addMachinePasses` の実装を読む。
+本当の最後に実行されるパスは `addPreEmitPass2` で追加されるもののようだ。
+また `addPass` の第一引数に `false` を渡せばmachine instruction verifierが
+走ることを抑制できるようだ。ということで、次のように書くとうまくいったfootnote:[長かった。]。
+
+....
+void RV16KPassConfig::addPreEmitPass2() {
+  addPass(createRV16KExpandPseudoPass(), false, true);
+}
+....
+
+ちなみにELVMバックエンド<<elvm-llvm_backend>>には分岐解析は実装されているが
+`reverseBranchCondition` は実装されていない。なぜだろう。TODO
+
+== `jcc` の分岐先が8bitに収まらない場合に対応する
+
+`je` などの条件分岐命令は、その分岐先を指定するための即値が符号付き7bit以内
+であるという制約がある。従ってPC相対で前後128バイトfootnote:[最下位bitとして
+`0` が補充されるため。]にジャンプすることができるが、場合によっては
+この幅に収まらないことがありうる。そのような場合には `j` 命令と組み合わせて
+用いる。問題は `j` 命令を使うか否かの判断をいつするかということである。
+
+RISC-Vではこの問題に対応していることが、次のようなCプログラムを
+入力することで分かる。
+
+....
+int test(int a, int b)
+{
+    if (a < 0) {
+        a += b;
+        a += b;
+        // ... 以下 a += b が続く
+        a += b;
+    }
+    return a;
+}
+....
+
+`a += b` の部分を増減させることで `blt` と `bge` 命令の内で適当な方が
+出力されることが分かる。
+
+これはbranch relaxationと呼ばれるようだ<<github_riscv-llvm_patch_31>>
+
+[quote]
+....
+Branch relaxation is needed to support branch displacements that overflow the
+instruction's immediate field.
+....
+
+RISC-Vでの対応<<github_riscv-llvm_patch_31>>を参考に実装する。
+まず `addPreEmitPass` に `addPass(&BranchRelaxationPassID);` を追加する。
+ついで `lib/CodeGen/BranchRelaxation.cpp` を見ると、次の関数を `RV16KInstrInfo` に
+実装すれば良いことが分かる。
+
+* `getInstSizeInBytes`
+* `isBranchOffsetInRange`
+* `getBranchDestBlock`
+* `insertIndirectBranch`
+
+順に実装する。 `getInstSizeInBytes` は命令のサイズを返す。
+基本的には `MCInstrDesc` の `getSize` を呼べばよいが、 `Bcc` の `Size` をTableGenにて
+32bitに設定しておく必要がある。
+
+`getBranchDestBlock` の実装では、ジャンプ先のbasic blockを返却する必要がある。
+RISC-Vではこれは必ず最後のオペランドになるのだが、RV16Kでは下手に `Bcc`
+疑似命令を作ってしまったためにそうはならない。仕方がないので
+命令の種類で分けて処理することにする。TODO
+
+実際のところRV16Kv2では `insertIndirectBranch` を実装する必要は**ない**。
+`BranchRelaxation` は、即値で飛ぶようなジャンプ命令
+（要するに `isBranchOffsetsInRange` が対象とするような命令）
+では対処できないほどの大きなジャンプに対して
+`insertIndirectBranch` を呼ぶ。したがって、そもそも
+`J` 命令が16bitの即値をとるようなRV16Kv2では、これで対応できないジャンプには
+ISAレベルで対応できない。AVRバックエンドには次のようにある。
+
+....
+// This method inserts a *direct* branch (JMP), despite its name.
+// LLVM calls this method to fixup unconditional branches; it never calls
+// insertBranch or some hypothetical "insertDirectBranch".
+// See lib/CodeGen/RegisterRelaxation.cpp for details.
+// We end up here when a jump is too long for a RJMP instruction.
+....
+
+次いで `insertBranch/removeBranch` で挿入・削除したバイト数を数え
+`BytesAdded/BytesRemoved` に保存する。 `BuildMI` の返却値を間接参照すると
+`MachineInstr` への参照が受け取れるらしい。
+
+ここでどさくさに紛れて `PseudoBR` をただの `Pat` に直そうとしたところ
+`br` にパターンマッチしなかった。
+
+....
+// Old
+let hasSideEffects = 0, mayStore = 0, mayLoad = 0,
+    isBarrier = 1, isBranch = 1, isTerminator = 1 in
+def PseudoBR : Pseudo<(outs), (ins simm16_lsb0_j:$imm15), [(br bb:$imm15)]>,
+               PseudoInstExpansion<(J simm16_lsb0_j:$imm15)>;
+
+// New
+def : Pat<(br bb:$imm), (J simm16_lsb0_j:$imm)>;
+....
+
+それから間接分岐に `jalr` を使うのは、RISC-Vでは正しいがRV16Kでは間違っている。
+RISC-Vでは `jr` は `jalr` へのaliasとなっていて、次のように定義される。
+
+    def : InstAlias<"jr $rs",      (JALR X0, GPR:$rs, 0)>;
+
+したがって `brind` は `JALR` にパターンマッチさせるべきなのだが、
+一方で `JALR` は**一般には**間接分岐の命令ではないため、
+`isIndirectBranch` などのフラグが立っていない。
+そこで `PseudoBRIND` 疑似命令を作成してフラグを立て、
+その上で `brind` を `PseudoBRIND` にマッチさせているfootnote:[しかし
+`PseudoBRIND` に `isCall` や `Defs` がついている理由はわからない。TODO]。
+このように、既存の命令に異なるフラグを立てたい場合に
+`PseudoInstExpansion` が使えるようだ。
+<<github-llvm-bcb36be8e3f5dced36710ba1a2e2206071ccc7ba>>。
+
+
+    let isCall = 1, Defs=[X1] in
+    let isBarrier = 1, isBranch = 1, isIndirectBranch = 1, isTerminator = 1 in
+    def PseudoBRIND : Pseudo<(outs), (ins GPR:$rs1, simm12:$imm12), []>,
+                      PseudoInstExpansion<(JALR X0, GPR:$rs1, simm12:$imm12)>;
+
+    def : Pat<(brind GPR:$rs1), (PseudoBRIND GPR:$rs1, 0)>;
+    def : Pat<(brind (add GPR:$rs1, simm12:$imm12)),
+              (PseudoBRIND GPR:$rs1, simm12:$imm12)>;
+
+さてではRV16Kはどうかというと、 `jalr` と `jr` はまったく異なる
+命令である。ただの間接分岐では `jr` を使うことが望ましく、
+一方でレジスタに入った関数の呼び出し時には `jalr` を使うべきである。
+そこで次のようにパターンマッチできる。
+
+    def : Pat<(brind GPR:$rs), (JR GPR:$rs)>;
+    def : Pat<(Call GPR:$rs), (JALR GPR:$rs)>;
+
+先の `Bcc` を導入した際にも実験したが、どうやら `Pseudo` のパターンは
+少々違う性質を持っているようだ。TODO
+
+ところでアセンブラ（ `MCInst` ）レベルでbranch relaxationに対応するのは
+良い考えでは無いらしい<<llvm_dev_ml-128257>>。
+
+大きめのプログラムを入力したところ、正しくrelaxされないことがあった。
+原因は i) 疑似命令のサイズが（ `Bcc/BccI` を除いて）すべて16bit
+であったことと ii) `Bcc/BccI` のoffset計算では `CMP` の分（2バイト）を
+減算する必要があったことであった。特に前者が重要で、
+`PseudoBR` や `PseudoRET` のように `PseudoInstExpansion` を用いて
+疑似命令を展開する場合、これらは `AsmPrinter` で展開されるため
+<<github-llvm-bcb36be8e3f5dced36710ba1a2e2206071ccc7ba>>branch relaxation
+時点でもそのまま入力される。したがって命令サイズの情報が必要である。
+さらに遅く展開される `PseudoHLT` についても同様である。
+一方で `FRMIDX` などの疑似命令は
+関数エピローグ・プロローグの挿入時点で展開される。
+したがって命令サイズの情報は必要ではないfootnote:[挙動からの類推。
+要調査；TODO]。
+
+branch relaxationの結果によっては `BccI imm, reg, ...` のような分岐を
+`reverseBranchCondition` が作成し、これを
+`insertBranch` で挿入される可能性がある。これは `cmpi imm, reg` に
+相当するため、そのままではいけない。まず `ScratchReg` を用意し
+`li ScratchReg, imm` としたうえで `Bcc ScratchReg, reg` とする。
+しかしbranch relaxationはregister allocationが終わった後に実行される。
+そのため新しいレジスタを確保するためにはregister scavengerを使用する
+必要がある。register scavengerはレジスタ割り付けが終わったあとに
+レジスタを確保するためのヘルパである<<llvm_dev_ml-111697>>。
+RISC-V・AMDバックエンドの `insertIndirectBranch` では実際にこれが
+使われている。なおこれらのバックエンドでは、
+仮想アドレスを物理アドレスに置換し終わったあとに
+`MRI.clearVirtRegs()` を呼んでいる。これは `insertIndirectBranch` は
+BranchRelaxationパスからのみ呼ばれるため、この段階で仮想レジスタが
+存在しないことを保証できるためである。一方で `insertBranch` は
+他のパスからも呼ばれうるため、ここで呼ぶことは適当でないfootnote:[`clearVirtRegs`
+に仕込まれたデバッグ用コードによってエラーが出力される。]
+
+machine basic blockの終わりにセットし、逆向きにレジスタを探すのが
+推奨されるfootnote:[前向きに探す `scavengeRegister` はdeprecatedと
+コメントにある。]。
+必要であればemergency spillが行われるようだ（要確認；TODO）footnote:[最新版
+ではこれの有効・無効を第五引数の `AllowSpill` で切り替えられるようだ。TODO]。
+
+`BccI imm, reg, ...` となるようなテストを書こうとしたが挫折した。TODO
+とりあえずテストなしにしておく。
+
+== リンカスクリプトを書く
+
+=== `.text/.data/.rodata` に対応する
+
+ROM を `0x00000000` から `0x0000FFFF` まで、
+RAM を `0x00010000` から `0x0001FFFF` までと定めたが、
+現状これに即して設定しているのは `.text` と `.data` のみで
+他のセクションには対応していない。これに対応するためには
+リンカスクリプトを書いてリンク時に指定する他ないようなので設定する。
+
+    SECTIONS
+    {
+        . = 0x00000000;
+        .text : { *(.text) }
+        . = 0x00010000;
+        .data : { *(.data) }
+        .rodata : { *(.rodata) }
+        .bss : { *(.bss) }
+    }
+
+<<redhat-ld_simple_example>><<takayuki-no09>><<hwenginner-linker>>を参考にして、
+`.text` をROMに割り付け `.rodata` と `.data` をRAMに割り付ける
+シンプルなスクリプトになった。次のように `-Xlinker` オプションで
+`--script` オプションをlldに渡すfootnote:[`clang` のヘルプをみると、直接
+`-T` オプションを渡すことでリンカスクリプトを指定できるように思えるが、
+動かなかった。要調査；TODO]。
+
+....
+$ bin/clang -target rv16k runtime.s foo.c -o foo.exe -Xlinker "--script=/home/anqou/workspace/llvm-project-build/rv16k.ld"
+....
+
+さてこれをClang側で指定したかったのだが、そもそもこのリンカスクリプトを
+どこに配置すればいいかわからない。例えばGCCでは内部的にリンカスクリプトを
+持っておりこれを利用してリンクを行っている<<koikikukan-000300>>が、Clangではそうではなく
+lldへのコマンドラインオプションを適切に指定することでこれを達成しているように
+思えるfootnote:[ただしOpenMPとMPLのためのリンカスクリプトだけは、
+`tools::AddOpenMPLinkerScript` などで動的に作成しているようだ。]。
+一方で上記のリンカスクリプトのような指定をlldのコマンドラインオプションでは
+達成できないように思える。良くわからない。TODO 仕方がないので当分手で `-Xlinker` をつける
+ことにする。
+
+=== `.bss` に対応する
+
+`.bss` セクションは `.data` や `.rodata` セクションとは異なり初期値を直接持たず、
+アドレスとサイズだけが格納されているfootnote:[多分。要確認。TODO]非初期化領域である<<man-elf>>。
+「非初期化」といいつつ、一般的なアーキテクチャfootnote:[一般的 :thinking_face:]では
+`0` で初期化される。
+
+RV16Kでは `.bss` を、メモリ上一番最後に配置されるセクションとすることで、
+他のセクションに使用されないRAM領域をそのまま利用することにするfootnote:[何らかの理由で
+`.bss` の後ろに他の領域を配置したい場合は、
+`.bss` が指定する領域を（ `.data` のように）ELFバイナリ中に確保するという手もある
+<<stackoverflow-57735654_34997577>>。]
+
+== [脇道] Brainfuckインタプリタを動かす
+
+このあたりでBrainfuckのインタプリタが動くようになる。
+
+....
+void jumpFront(const char *str, int *index)
+{
+    if (str[*index] != '[') return;
+    for (int count = 0; str[*index] != '\0'; (*index)++) {
+        if (str[*index] == '[')
+            count++;
+        else if (str[*index] == ']')
+            count--;
+        if (count == 0) break;
+    }
+}
+
+void jumpBack(const char *str, int *index)
+{
+    if (str[*index] != ']') return;
+    for (int count = 0; *index >= 0; (*index)--) {
+        if (str[*index] == '[')
+            count--;
+        else if (str[*index] == ']')
+            count++;
+        if (count == 0) break;
+    }
+}
+
+int brainfuck(const char *str)
+{
+    static int data[100];
+
+    int pointer = sizeof(data) / sizeof(int) / 2;
+    for (int index = 0; str[index] != '\0'; index++) {
+        switch (str[index]) {
+        case '+':
+            data[pointer]++;
+            break;
+        case '-':
+            data[pointer]--;
+            break;
+        case '>':
+            pointer++;
+            break;
+        case '<':
+            pointer--;
+            break;
+        case '.':
+            break;
+        case ',':
+            break;
+        case '[':
+            if (data[pointer] == 0) jumpFront(str, &index);
+            break;
+        case ']':
+            if (data[pointer] != 0) jumpBack(str, &index);
+            break;
+        }
+    }
+    return data[pointer];
+}
+
+int main()
+{
+    return brainfuck("+++++[>++++++++++<-]>++");
+}
+....
+
+AWS Lambdaの出来上がりであるfootnote:[は？]。
+
+== byvalに対応する
+
+構造体などレジスタに収まらない値を関数に値渡しする場合（ `isByVal()` が
+`true` を返す時）に対応する。
+
+次のようなCコードを入力するとbyvalに対応していないために `bar`
+についてはエラーになるが、 `foo` と `piyo` については
+エラーにならない。
+
+....
+struct hoge {
+    int ary[10];
+};
+
+int foo(struct hoge h)
+{
+    return h.ary[3];
+}
+
+int bar(void)
+{
+    struct hoge h;
+    h.ary[3] = 10;
+    return foo(h);
+}
+
+struct hoge piyo(int i)
+{
+    struct hoge h;
+    h.ary[3] = i;
+    return h;
+}
+....
+
+まず `foo` のように、構造体の値を引数として渡す場合、
+呼び出し元の関数のスタックに渡す構造体のコピーを作成する。
+次いでこのコピーへのポインタを
+値の代わりに引数として渡す。これらは `LowerCall` にて行われる。
+
+また `piyo` のように
+戻り値として構造体の値を返す場合、呼び出される関数の第一引数に
+`sret` がついたポインタが渡されるように関数プロトタイプが
+フロントエンドによって変更される。それに合わせて関数呼び出しの
+戻り値・引数も変更されるため、バックエンドが特別にすべき
+処理はない。
+
+結局 `byval` 処理のために変更する必要があるのは `LowerCall` での
+「構造体のコピーをスタックに作成し、値の代わりにこれへのポインタを
+返す」部分である。実装に際してはRISC-Vのもの<<github_riscv-llvm_patch_25>>
+を参考にする。
+
+最適化なしだと無意味なコードが多く出力されてしまうため、
+次のようなコードを `-O2` をつけてテストするとよい。
+
+....
+struct hoge {
+    int ary[10];
+};
+
+int foo(struct hoge);
+
+struct hoge bar(int i)
+{
+    struct hoge h;
+    h.ary[3] = i;
+    h.ary[3] = foo(h);
+    return h;
+}
+....
+
+なお構造体のサイズが小さく、レジスタに直接載るような場合footnote:[`int` の変数一つ
+がメンバであるなど。]でも、このように迂遠な方法をとる。
+これはおそらく `Clang` 側でcalling conventionとして指定することにより
+解決が可能であると推測される。TODO footnote:[例えばx86で「本来
+レジスタに収まるために直接渡されるはずの構造体に `byval` 指定がついた
+LLVM IRが渡された場合」などを実験する必要がある。TODO]
+
+テストでは `getelementptr` を用いる。この命令の
+第三引数以降は、構造体なら何番目のメンバか、配列なら何番目の要素かを表している
+<<llvm-langref>>。ちょうどC言語の `.` や `[]` に相当するようだfootnote:[ただし
+返ってくるのは当該要素へのポインタである]。
+単なるポインタを間接参照する場合は `0` を指定する必要があることが分かる。
+<<llvm-langref>>にある例を引用する。
+
+....
+struct RT {
+  char A;
+  int B[10][20];
+  char C;
+};
+struct ST {
+  int X;
+  double Y;
+  struct RT Z;
+};
+
+int *foo(struct ST *s) {
+  return &s[1].Z.B[5][13];
+}
+....
+
+このようなCコードに対して、次のようなLLVM IRが対応する。
+
+....
+%struct.RT = type { i8, [10 x [20 x i32]], i8 }
+%struct.ST = type { i32, double, %struct.RT }
+
+define i32* @foo(%struct.ST* %s) nounwind uwtable readnone optsize ssp {
+entry:
+  %arrayidx = getelementptr inbounds %struct.ST, %struct.ST* %s, i64 1, i32 2, i32 1, i64 5, i64 13
+  ret i32* %arrayidx
+}
+....
+
+なお構造体に対してindexを指定する際には `i32` 定数値のみが使用できる。
+上の例で `i32` となっているところはそれである。
+
+RISC-Vのコード<<github_riscv-llvm_patch_25>>を参考にしてテストを書くと
+`foo+2` のようなコードが生成される。
+`llvm-objdump` で確認すると、一見 `0` が入っていて正しくオブジェクトファイルが
+生成されていないように見えるが `llvm-readelf` で確認するとrelocationが
+作成されていることが分かる。実際グローバル変数はどこに配置されるか分からないので
+これが正しい。
+
+byval引数のためにローカルスタックに用意した領域への
+ポインタに引数をすり替える必要がある。first tryではこれを忘れていた。
+
+== fastccに対応する
+
+LLVMでは、ABIに定義されたC言語の関数呼び出し規約に則った呼出し規約 (`ccc`;
+`The C calling convention`) の他に、
+互換性を無視したより高速な呼出し規約を利用できる。
+これを `fastcc`; `The fast calling convention` という<<llvm-langref>>。
+これは例えば `static` 指定された関数など、外部との互換性を気にする必要がない
+場合に使用されるfootnote:[最適化を有効化した場合に限る。多分；TODO]。
+また、末尾最適化は `fastcc` 指定された関数にのみ適用される。
+
+RISC-VではCCCとFastCCに違いがない<<llvm_phabricator-d45395-398662>>。
+
+RV16Kでもあえて違いを出す必要がないため `ccc` と全く同じにしておく。
+
+== インラインアセンブリに対応する
+
+LLVM IRはインラインアセンブリに対応している<<llvm-langref-inline_asm>>。
+制約などの記述方法はほとんどgccのインラインアセンブリのそれと一致するため、
+gcc向けの資料などを参考にできる<<hazymoon-gcc_inline_asm>>。
+
+RV16Kバックエンドでもインラインアセンブリに対応する。
+ユーザが直接使うことよりも、テストが記述しやすくなることが
+モチベーションである。
+参考にするパッチは<<github_riscv-llvm_patch_28>>。
+
+まず `RV16KTargetLowering::getRegForInlineAsmConstraint` をオーバーライドする。
+この関数では `r` や `{edx}` といったレジスタの制約に応じて、
+対応するレジスタの番号とレジスタのクラスを返す。
+オーバーライド元の `TargetLowering::getRegForInlineAsmConstraint` は
+具体的な物理レジスタが制約として与えられた場合（例えば `{edx}` ）
+の処理が記述されているため、
+それ以外（ `r` ）の場合について記述する。特定の物理レジスタに限らず、
+あるレジスタクラスに属するレジスタなら何でも良い場合は、
+そのレジスタクラスと `0` を返却する
+footnote:[`TargetLowering::getRegForInlineAsmConstraint` の
+コメントに詳しい。]。
+
+これによってbranch analysisまでインラインアセンブリが通るようになる。
+`RV16KInstrInfo::getInstSizeInBytes` にてエラーが出る
+footnote:[branch analysis実装時に `llvm_unreachable` を仕込んでいたため。]ので、
+`TargetOpcode::INLINEASM` を
+ハンドルする。 `getInlineAsmLength` を呼べば良い。
+
+すると次のようなエラーがアセンブリ中に出力されるようになる。
+
+    error: invalid operand in inline asm: 'add $1, $2'
+    error: invalid operand in inline asm: 'add $1, $2'
+
+すなわち `$1` などが正しく展開されていない。
+これを展開するためには `RV16KAsmPrinter::PrintAsmOperand` を
+実装する必要があるfootnote:[つまり `MachineOperand` のレベルでは
+既にレジスタが対応している。通常の `LowerRV16KMachineInstrToMCInst` で
+処理できない理由はよくわからない。TODO]。
+なお `AsmPrinter::PrintAsmOperand` は `c` や `n` といったmodifierが
+付与された即値オペランドを処理するようだ<<llvm-langref-inline_asm-asm_template_argument_modifier>>。
+
+同様に制約 `m` にも対応する。まず `RV16KDAGToDAGISel::SelectInlineAsmMemoryOperand`
+をオーバーライドして実装し、メモリアドレスへのパターンマッチを実現するfootnote:[「メモリアドレスへの
+パターンマッチ」とは耳慣れない表現だが、インラインアセンブリ以外のコード生成の場合でも
+メモリアドレスを計算する `SelectionDAG` へパターンマッチを行いこれを
+lowerしている。ちなみにこの関数を実装していなければ
+`Could not match memory address.` というエラーが出る。]。
+とりあえず単純な場合にのみ対応するため左から右へ受け流すfootnote:[参考にしたRISC-V以外の
+バックエンドでは `reg + reg` などのアドレッシング・モードが存在
+することもあり、より複雑な処理を行っている。実際RISC-Vの実装では、メモリアクセス時に
+足される即値が `0` に固定されている。また `FrameIndex` の取り扱いなども
+不透明だ。ナイーブに考えれば `SelectAddrFI` の呼出しが必要なはずである。TODO]。
+
+また `$1` などを展開するために `RV16KAsmPrinter::PrintAsmMemoryOperand` を
+実装する。
+
+== emergency spillに対応しない
+
+register scavengerが空きレジスタを見つけられない場合にレジスタの内容を
+退避するemergency spillに対応しようとした。
+まず `RV16KFrameLowering::processFunctionBeforeFrameFinalized` を
+オーバーライドする。この関数はstack frameのファイナライズを行う関数で、
+これが呼ばれた後はスタックのサイズが確定し、
+frame indexを定数値に置き換えられるfootnote:[コメントより。]。
+
+emergency spillとはregister scavengerがレジスタを確保する際に行う
+spill操作のことで `RegScavenger::spill` 内で行われる。
+
+ここでRISC-Vバックエンドのemergency spillに関する考察を行うと、
+RV16Kバックエンドにはemergency spillへの対応は不要であると結論される。
+
+そもそも、RISC-Vバックエンドがregister scavengerを必要とするのは次に限られる。
+これは `MRI.createVirtualRegister` を利用しているコードのうち、
+register allocationが実行された後に実行される部分と同一である。
+
+1. `RISCVFrameLowering::adjustReg` 内で `Val` を `DestReg` に読み込む際 `Val` が
+符号付き12bit即値に収まらない場合は `addi` 1命令では対応できないため、
+`ScratchReg` 仮想レジスタを一時レジスタとして使用してこれを行う。
+このとき `Val` はスタックサイズ（ないしそれに近い値）である。
+2. `RISCVRegisterInfo::eliminateFrameIndex` 内で `Offset` を `FrameReg` と
+ともにframe indexの代わりに指定する際 `Offset` が符号付き12bit即値に
+収まらない場合は `addi/lw/sw` など1命令では対応できないため、
+`ScratchReg` 仮想レジスタを一時レジスタとして使用してこれを行う。
+このとき `Offset` はスタック上の相対アドレスである。
+3. `RISCVInstrInfo::insertIndirectBranch` 内でジャンプ先のアドレスを
+レジスタに格納するために `ScratchReg` 仮想レジスタを一時レジスタとして
+使用してこれを行う。
+
+`RISCVFrameLowering::processFunctionBeforeFrameFinalized` 内のコメントが
+意味しているのは、上記の3について `ScratchReg` に
+対応する物理レジスタを見つけられないような場合のemergency spillには
+対応しないということだろう。おそらくその理由は、そのような状況を
+frame loweringの段階で判断できないからだと推察される。
+すなわちRISC-Vバックエンドにおいては、
+全ての場合についてemergency spillのための領域 (emergency spill slot)
+をstack上に確保するのは非効率であるため、
+frame loweringの段階で分かる情報から判断して
+emergency spill slotが必要そうなframeに対してのみこの領域を確保しているが、
+上記リストの3の状態でemergency spillが必要か否かをframe loweringの
+段階で判断することはほとんど不可能だと推察されるということである。
+
+では1と2の場合にはどのように「emergency spill slotが必要か否か」を判断するのか。
+実際のRISC-Vバックエンドでは「フレームが使用すると推測されるスタックサイズが
+符号付き11bit整数に収まらない（つまり2048バイト以上）のとき」にこれを確保する。
+なぜこれでよいのか。それは、1と2はどちらも**スタックサイズまたはsp/fpからの
+相対アドレスを表す即値が符号付き12bit整数に収まらない場合に、
+register scavengerを利用して一時レジスタを確保する**という共通点があるからである。
+従って一時レジスタを使用するのはスタックサイズが符号付き12bit整数値で
+表せないほど大きい場合に限定される。もちろんこれは必要条件で、
+このような状態であったとしても実際にはemergency spillが必要とならないケースが
+ほとんどだと推察される。それゆえRISC-Vバックエンドにemergency spillを
+導入したコミットのコミットメッセージ
+<<github-llvm-0715d35ed5ac2312951976bee2a0d2587f98f39f>>
+では次のように書いている。
+
+[quote]
+....
+Although the register scavenger can often find a spare register, an emergency
+spill slot is needed to guarantee success.
+....
+
+では転じてRV16Kではどうか。RV16Kでは `lw/sw` が符号付き16bit即値をとるため、
+上記リストのうち2は問題にならない。一方で1と3については同様の問題をはらんでいる。
+このうち1については、RISC-Vと同様の手法を用いて対応できる。すなわち `addi` が
+許容する符号付き4bit即値より大きいスタックサイズとなりそうな場合は
+emergency spill slotを確保するのである。しかしこれはほとんどの関数で
+この領域を確保することを意味するため、極めて非効率であり「コスパ」が悪い。
+従って当分emergency spillについては実装しないことにする。
+
+ちなみにRISC-Vの `large-stack.ll` のテストが<<github_riscv-llvm_patch_32>>では
+変更されているが、実はこのテストはemergency spillを必要としないため、
+`processFunctionBeforeFrameFinalized` の当該部分をコメントアウトしても
+動作する。これはよく分からない。TODO
+
+なおemergency spillを実装していない（ `processFunctionBeforeFrameFinalized` がない）
+バックエンドも多い。
+またARCバックエンドでは、スタック領域を使用するならば (`MFI.hasStackObjects()`)
+必ずemergency spill slotを確保している。
+
+== `FRAMEADDR/RETURNADDR` に対応する
+
+LLVM IRには `llvm.frameaddress` というintrinsicがある。
+これは指定したスタックフレームのframe pointerの値を計算し返却するビルトイン関数で、
+例えばスタックトレースの取得などに使用される（要確認；TODO）。
+これは `ISD::FRAMEADDR` に対応しておりcustomでのlowerが必要である<<github_riscv-llvm_patch_29>>
+footnote:[`setOperationAction` にCustomを指定する必要はないようだ。なぜだろう。TODO]。
+具体的には引数で指定された深さまでframe pointerを手繰る必要がある。
+しかしこれはスタックにframe pointerが格納されている場合に限り有効である。
+例えば `hasFP` では、引数で指定する関数中で `llvm.frameaddress` が呼ばれていないかを
+考慮できるが、その関数を呼び出す関数のことまではわからない。したがってframe pointer eliminationが
+行われている関数から呼び出されるなどした場合は正しいframe pointerを
+計算することはできないが、仕様上これで良いことになっている<<llvm-langref>>。
+すなわち `llvm.frameaddress` を使用すること自体は、これが正しく動かなくなるような
+最適化等を抑止しない。
+
+`llvm.returnaddress` はその関数のreturn addressを同様に計算し返却するビルトイン関数で、
+`ISD::RETURNADDR` に対応する。これもまた `llvm.frameaddress` と同じ意味において
+正しい値を返却することは保証しない<<llvm-langref>>。
+
+ところで `llvm.returnaddress` が正常に動作するためには、スタック上に
+`ra` が保存されている必要がある。おそらくこれがRISC-Vバックエンドが
+`RISCVFrameLowering::determineCalleeSaves` にて `SavedRegs` に
+`ra` を追加する理由だろうと推察される。
+
+== `PseudoBR` を消す
+
+RISC-Vでは `br` にパターンマッチさせるために `PseudoBR` 擬似命令を作成している。
+これは `JAL` 命令を直接使うと `isBranch` などのフラグが立たないためである
+と推察される<<github-llvm-bcb36be8e3f5dced36710ba1a2e2206071ccc7ba>>。
+RV16Kでは `J` 命令を直接使用すればよいため `PseudoBR` 擬似命令は必要ない。
+そこでこれを削除し次のようにパターンマッチを記述した。
+
+    def : Pat<(br bb:$imm), (J simm16_lsb0_j:$imm)>;
+
+すると `branch.ll` を読み込ませると次のようなエラーが出力された。
+
+    ISEL: Starting selection on root node: t19: ch = br t21, BasicBlock:ch<test2 0x5577d143f220>
+    ISEL: Starting pattern match
+      Match failed at index 0
+    LLVM ERROR: Cannot select: t19: ch = br t21, BasicBlock:ch<test2 0x5577d143f220>
+    In function: foo
+
+以前にもあったが、どうやら `Instruction` の `Pattern` フィールドに
+パターンを指定するのと `Pat` を利用してパターンを指定するのとは
+微妙に意味が異なるようなのだ。実際 `J` の定義の際に
+`let Pattern = [(br bb:$imm)]` と指定すると正しく動作する。
+
+`TargetSelectionDAG.td` 内で `Pat` は `Pattern` クラスであると定義される。
+一方 `Pattern` フィールドの方は `Target.td` の `Instruction` クラス内で
+保持される。
+
+`br` のための `Pat` がある場合とない場合で生成されるTableGenファイルを比較した
+ところ**全く同一**であった。つまりTableGenが `Pat` で指定される `br` に
+対応していないようだ。
+
+`Pat` で指定するパターンも `Pattern` フィールドで指定するパターンも、
+どちらもTableGenによって `RV16KGenDAGISel.inc` の `SelectCode` という関数の
+`MatcherTable` という巨大なテーブルにまとめられる。
+これを生成するのは `DAGISelEmitter.cpp` の `DAGISelEmitter::run` のようだ。
+
+`ninja -v` として `RV16KGenDAGISel.inc` を作るコマンドを把握し `-debug` オプションを
+仕掛けたが、そもそもこれに対応していなかった。 `gdb` を用いて調べようとしたが
+breakpointが設定できない。謎。仕方がないので `DAGISelEmitter::run` 内の
+`LLVM_DEBUG` の `errs()` を `std::cerr` に変更してコンパイルし実行すると、
+すでにこの段階で `br` が消えていることが分かった。さてどうするか。
+
+このDAGISelの部分がどのように動くかについてまとめた資料を見つけた
+<<github-fracture-wiki-how-dagisel-works>>。
+これによると実際に `Pattern` を解釈しているのは
+`CodeGenDAGPatterns::ParsePatterns` のようだ。
+そこでここに次のようにデバッグ表示を仕込むと `br` の文字が見えた。
+ここまでは到達しているようだ。
+
+  /////////// INSERTED FOR DEBUG FROM HERE //////////
+  std::cerr << "PATTERN: ";
+  Pattern.dump();
+  std::cerr << "RESULT:  ";
+  Result.dump();
+  /////////// INSERTED FOR DEBUG   TO HERE //////////
+
+  ParseOnePattern(CurPattern, Pattern, Result, InstImpResults);
+
+次に `CodeGenDAGPatterns::ParseOnePattern` の末尾にこのようにデバッグ表示を
+仕込んだ。
+
+  /////////// INSERTED FOR DEBUG FROM HERE //////////
+  std::cerr << "PATTERN: ";
+  Pattern.dump();
+  std::cerr << "RESULT:  ";
+  Result.dump();
+  std::cerr << ">>>>>>>>>>>>>>>\t" << std::boolalpha << Temp.getOnlyTree()->hasPossibleType() << std::endl;
+  /////////// INSERTED FOR DEBUG   TO HERE //////////
+
+
+  // A pattern may end up with an "impossible" type, i.e. a situation
+  // where all types have been eliminated for some node in this pattern.
+  // This could occur for intrinsics that only make sense for a specific
+  // value type, and use a specific register class. If, for some mode,
+  // that register class does not accept that type, the type inference
+  // will lead to a contradiction, which is not an error however, but
+  // a sign that this pattern will simply never match.
+  if (Temp.getOnlyTree()->hasPossibleType())
+    for (auto T : Pattern.getTrees())
+      if (T->hasPossibleType())
+        AddPatternToMatch(&Pattern,
+                          PatternToMatch(TheDef, makePredList(Preds),
+                                         T, Temp.getOnlyTree(),
+                                         InstImpResults, Complexity,
+                                         TheDef->getID()));
+
+次のように出力された。
+
+    PATTERN: anonymous_997: 	(br (bb:{ *:[Other] }):$imm)
+    RESULT:  anonymous_997: 	(J (imm:{ *:[] })<<P:Predicate_simm16_lsb0_j>>:$imm)
+    >>>>>>>>>>>>>>>	false
+
+すなわち `Temp.getOnlyTree()->hasPossibleType()` が `false`
+となっているためにパターンとして登録されないことが分かった。
+
+ここで正しく動作する `Pattern` フィールドでの指定を試すと、次のように出力された。
+
+    PATTERN: J:     (br (bb:{ *:[Other] }):$imm)
+    RESULT:  J:     (J (bb:{ *:[Other] }):$imm)
+    >>>>>>>>>>>>>>> true
+
+そこで次のように `Pat` を指定すると無事動作した。
+
+    def : Pat<(br bb:$imm), (J bb:$imm)>;
+
+一方 `bb` ではなく `simm16_lsb0_j` に合わせると `false` となり動作しなかった。
+
+    PATTERN: anonymous_997: 	(br (imm:{ *:[] })<<P:Predicate_simm16_lsb0_j>>:$imm)
+    RESULT:  anonymous_997: 	(J (imm:{ *:[] })<<P:Predicate_simm16_lsb0_j>>:$imm)
+    >>>>>>>>>>>>>>>	false
+
+ここで `Bcc` に注目すると、こちらも `bb` から `simm8_lsb0` と同じような
+パターンマッチを行っているにも関わらず、次のように `true` が返却されている。
+
+    PATTERN: anonymous_1003:        (RV16KBrCC GPR:{ *:[i16] }:$lhs, GPR:{ *:[i16] }:$rhs, (bb:{ *:[Other] }):$dst, SETLE:{ *:[Other] })
+    RESULT:  anonymous_1003:        (Bcc:{ *:[i16] } GPR:{ *:[i16] }:$lhs, GPR:{ *:[i16] }:$rhs, simm8_lsb0:{ *:[Other] }:$dst, 1:{ *:[i16] })
+    >>>>>>>>>>>>>>> true
+
+そこで `simm16_lsb0_j` の定義を変え `ImmLeaf` の継承をやめたところ、
+`br` のパターンマッチを書き換えずとも動作するようになった。
+
+    def simm16_lsb0_j : Operand<OtherVT> {
+
+推測するに `ImmLeaf` 継承時に指定する `return isShiftedInt<15, 1>(Imm);`
+が `bb` には当てはまらなかった（そもそも即値でない）ために
+正しいパターンマッチと認識されなかったのではないだろうか。TODO
+
+== rv16k-rtを作る
+
+ランタイムライブラリなど、LLVM バックエンドを使うためのスクリプトを
+置く場所を作る。これ自体は単なるディレクトリ（ないしgitレポジトリ）だが、
+これがある前提でClangを設定する。
+
+`runtime.s` を `crt0.s` という名前でrv16k-rtに移す。また `rv16k.lds` も
+ここに移す。Clangを起動する際には `--sysroot=/path/to/rv16k-rt` とする。
+そのため `--sysroot` が設定された場合には `getFilePaths().push_back(D.SysRoot)` とし、
+そこを探索パスに追加する。
+
+ついでに `-L` オプションに対応する。これはそのままリンカに渡す。
+したがって `-L` をつけるだけではClangの探索パスには入らないことに注意が必要である。
+`GetProgramPath` の実装を見ると `LibraryPaths` を検索していることが分かるが、
+これは `-L` とは全く無関係である。
+
+さて以上の変更から、Clangを起動する際には次のようにすることになった。
+
+    $ bin/clang -target rv16k -Oz bf.c -o bf.exe --sysroot=/path/to/rv16k-rt
+
+== `0` を不正なアドレスにする
+
+通常 `0` として指定される `NULL` を不正なアドレスにする。
+すなわちRAMの0番地にはいかなるデータも格納しないことにする。
+これはLLVMが暗黙のうちに仮定している条件でもある（どこかで出典を見たが見つけられない；
+要調査；TODO）。
+
+リンカスクリプトをいじって `.data` が `0x00010002` から始まるようにする。
+
+しかし実質的にNULLポインタが発生するのはmalloc/freeを使い始めてからなので、
+それが無い間はさほど問題ではない。
+
+== 乗算・除算・剰余に対応
+
+RV16Kv2命令セットには掛け算や割り算・余りを計算するための命令がない。
+そこでこれらをソフトウェア的に実装し対応する。
+
+LLVMはこれらの演算を `__mulhi3` などのライブラリ関数呼び出しに変換する。
+どの操作がどのライブラリ関数呼び出しに対応しているかは
+`llvm/include/llvm/RuntimeLibcalls.def` にて定まっており、
+例えば32bitの掛け算なら `__mulsi3` ・ 16bitなら `__muhi3` と定義されている。
+
+これらの関数の実体はLLVMのcompiler-rtプロジェクトなどfootnote:[他にglibcや
+newlibなどがある。]で定義される。
+しかしcompiler-rt の `__mulsi3` の実装などをみると `int` が使われている。
+すなわち `int` を32bitの整数型と前提しているのだ。
+一方で16bit用の `__mulhi3` などはそもそも定義されていない。
+したがってこのままでは使用できないため、
+これをフォークし改変して使用することにする。
+
+これらの関数は、各々別のオブジェクトファイルとしてコンパイルしfootnote:[リンクは
+オブジェクトファイル単位で行われるため、複数の関数を一つの
+オブジェクトファイルにまとめてしまうと、不要な関数までリンクされてしまう。]、
+`ar` コマンドを用いて次のように静的ライブラリ `libc` とする。
+
+    ar rcs libc.a __mulhi3.o __divhi3.o ...
+
+この `libc` をLLDを用いてリンクする。それには `-lc` オプションを付与すればよいが、
+いちいち手で指定するのは面倒のためClang側でデフォルト設定する。
+このときこのオプションはソースコードをコマンドに並べ終えたあとに指定することが
+大切である。また `libc` の他にも静的ライブラリをリンクする必要があり、
+それらが互いに循環依存の関係にある場合は `--start-group` と `--end-group` で
+囲むなどする必要がある<<shinh-blog-010637>>。
+
+== `AllowRegisterRenaming` を `1` にする
+
+TableGenファイルによるTarget定義のところで `AllowRegisterRenaming` を `1` に
+設定する<<github_riscv-llvm_patch_85>>。これによってテストを若干修正する必要が
+ある。
+
+`AllowRegisterRenaming` によって、
+レジスタ割り付けが終わった後にレジスタの名前を書き換える処理が許可される。
+ABIやopcodeの制限からレジスタを書き換えることができない場合は
+`MachineOperand::isRenamable` が `false` を返すことが要求される。
+これが具体的にどのような場合に相当するのかはよくわからないが、
+とりあえずテストはパスしたのでよしとする。TODO
+
+このレジスタ書き換えは `MachineCopyPropagation` で行われる。
+このパスは、コピー先レジスタが使われるまでにコピー元レジスタが破壊されていなければ、
+代わりにコピー元レジスタを使用するようにする。
+
+== 最適化について調査する
+
+RV16Kv2にとってベストな最適化が行われるようにしたい。
+
+`llvm/lib/Passes/PassBuilder.cpp` にて最適化等のパイプラインが構築されている<<llvm_dev_ml-117139>>。
+具体的には `PassBuilder::parseModulePass` にてコマンドラインオプションが
+パーズされ、通常 `buildPerModuleDefaultPipeline` が呼ばれる。
+このなかでは `buildModuleSimplificationPipeline` によってcore simplificationの
+ためのパスが追加され、次いで `buildModuleOptimizationPipeline` によって
+optimizationのためのパスが追加される。
+
+具体的にどのようなパスが実行されているか、Clangに `-mllvm
+-opt-bisect-limit=-1` をオプションとして渡すことでダンプさせることができる。
+また `-mllvm -debug-pass=Arguments` を渡すことで `opt` にどのようなオプションが
+渡されるかを見ることができる<<llvm_dev_ml-117139>>。
+
+`TwoAddressInstructionPass` は `A = B op C` を `A = B` と `A op= C` に
+分割する。
+
+`-Oz` オプションが渡されたときの挙動が良くわからない。TODO
+`-O2` のときと比較すると `opt` に渡されているオプションは少なくなっている。
+これは `PassBuilder` にて `isOptimizingForSize` を使って分岐しているところに
+対応しているようだ。したがって `-Oz` オプションfootnote:[あるいは `-Os` オプション。
+確認した限りにおいて `-Os` と `-Oz` は同じように扱われている気がする。]をつけた場合、
+次の箇所が**無効化**される。
+
+まず標準ライブラリ関数呼び出しの結果が用いられない場合に、
+引数の値の範囲に応じて関数呼び出しを抑制するような `if` を追加する（shrink-wrapする）
+パスfootnote:[shrink-wrapの意味がよくわからないが、当該ソースコードを見る限りは
+多分こういうこと。]。
+
+  if (!isOptimizingForSize(Level))
+    FPM.addPass(LibCallsShrinkWrapPass());
+
+次にソースコードのプロファイルに応じてメモリアクセスの命令を最適化するパス
+footnote:[これがいまいち良くわからない。なぜサイズのために抑制する必要があるのか。TODO]。
+
+  // For PGO use pipeline, try to optimize memory intrinsics such as memcpy
+  // using the size value profile. Don't perform this when optimizing for size.
+  if (PGOOpt && PGOOpt->Action == PGOOptions::IRUse &&
+      !isOptimizingForSize(Level))
+    FPM.addPass(PGOMemOPSizeOpt());
+
+最後に簡素化とインライン展開を行うパス群footnote:[サイズのためにインライン展開を
+抑制すべきというのは理解できるが、一方で `static` が付与された関数のインライン展開は
+抑制されない。扱う場所が違うのかもしれない。TODO]。
+
+....
+// Generally running simplification passes and the inliner with an high
+// threshold results in smaller executables, but there may be cases where
+// the size grows, so let's be conservative here and skip this simplification
+// at -Os/Oz. We will not do this  inline for context sensistive PGO (when
+// IsCS is true).
+if (!isOptimizingForSize(Level) && !IsCS) {
+  InlineParams IP;
+
+  // In the old pass manager, this is a cl::opt. Should still this be one?
+  IP.DefaultThreshold = 75;
+
+  // FIXME: The hint threshold has the same value used by the regular inliner.
+  // This should probably be lowered after performance testing.
+  // FIXME: this comment is cargo culted from the old pass manager, revisit).
+  IP.HintThreshold = 325;
+
+  CGSCCPassManager CGPipeline(DebugLogging);
+
+  CGPipeline.addPass(InlinerPass(IP));
+
+  FunctionPassManager FPM;
+  FPM.addPass(SROA());
+  FPM.addPass(EarlyCSEPass());    // Catch trivial redundancies.
+  FPM.addPass(SimplifyCFGPass()); // Merge & remove basic blocks.
+  FPM.addPass(InstCombinePass()); // Combine silly sequences.
+  invokePeepholeEPCallbacks(FPM, Level);
+
+  CGPipeline.addPass(createCGSCCToFunctionPassAdaptor(std::move(FPM)));
+
+  MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(std::move(CGPipeline)));
+}
+....
+
+`PassBuilder` で指定されているのはこれだけだが、パス内部で最適化レベルの
+処理を行うパスについてはこの限りでない。例えば `LoopUnrollPass` は
+`OptLevel` を引数として受け取り、その値に応じて内部的なしきい値を変える。
+
+== 即値命令を追加する
+
+RV16Kv3に向けて `lsi/andi/ori/xori/lsli/lsri/asri` 命令を追加すると
+次のように変化した。
+
+image::img/rv16kv2_imm_opt.png[]
+
+4bitに収まるにも関わらず `lsi` ではなく `li` を使用しているのは、
+リンク時に値が決まるためであると推察される。
+
+== リンク時最適化（LTO; Link Time Optimization）をかける
+
+各ファイルをコンパイルする際にLLVM bitcodeでとどめ、
+必要なすべてのファイルをリンク時にconcatした上で機械語へ変換することによって、
+オブジェクトファイル間をまたいで不要なコードの削除などの
+最適化を行うことができる。これをLTOという。
+LTOはClangに `-flto` オプションを渡すことで実行することができる。
+
+LLDにLLVM bitcodeを渡すため、Clangの `RV16KToolChain` に次を追加。
+
+  bool HasNativeLLVMSupport() const override { return true; }
+
+またLLDがLLVM bitcodeから `e_machine` を特定できるように、
+`lld/ELF/InputFiles` の `getBitcodeMachineKind` にRV16Kのための `case` を追加。
+
+  case Triple::rv16k:
+    return EM_RV16K;
+
+これでClangに `-flto` オプションが渡せるようになる。
+
+……なるのだが、目立った最適化は得られなかった。むしろ `-Oz` オプションを
+つけているにもかかわらずコードサイズは大きくなった。理由不明。TODO
+
+== 末尾再帰に対応する
+
+RISC-Vは末尾再帰に対応している<<llvm_phabricator-d45395>>。
+`PseudoTAIL` 擬似命令をアセンブリレベルで導入した上で、これをコード生成させている。
+
+例えば次のようなコードをLLVM IRにコンパイルすると `tail call` が出現する。
+
+....
+$ cat foo.c
+int factorial(int x)
+{
+    if (x > 0)
+        return x * factorial(x - 1);
+    else
+        return 1;
+}
+
+int test_tailcall(int a)
+{
+    return factorial(a);
+}
+
+$ ./rv16k-clang -c -S -O1 foo.c -o foo.ll -emit-llvm
+
+$ cat foo.s
+
+...
+
+; Function Attrs: nounwind readnone
+define dso_local i16 @factorial(i16 %x) local_unnamed_addr #0 {
+entry:
+  %cmp3 = icmp sgt i16 %x, 0
+  br i1 %cmp3, label %if.then, label %return
+
+if.then:                                          ; preds = %entry, %if.then
+  %x.tr5 = phi i16 [ %sub, %if.then ], [ %x, %entry ]
+  %accumulator.tr4 = phi i16 [ %mul, %if.then ], [ 1, %entry ]
+  %sub = add nsw i16 %x.tr5, -1
+  %mul = mul nsw i16 %x.tr5, %accumulator.tr4
+  %cmp = icmp sgt i16 %sub, 0
+  br i1 %cmp, label %if.then, label %return
+
+return:                                           ; preds = %if.then, %entry
+  %accumulator.tr.lcssa = phi i16 [ 1, %entry ], [ %mul, %if.then ]
+  ret i16 %accumulator.tr.lcssa
+}
+
+; Function Attrs: nounwind readnone
+define dso_local i16 @test_tailcall(i16 %a) local_unnamed_addr #0 {
+entry:
+  %call = tail call i16 @factorial(i16 %a)
+  ret i16 %call
+}
+
+...
+....
+
+ちなみに `factorial` の方は（関数呼び出しでなく）単なるループに展開
+されていることにも注意が必要である。また `-O2` で最適化すると
+`factorial` がインライン展開されるため `tail call` はなくなってしまう。
+
+さてTCOを行うためには、まず i) `tail` が付与された関数呼び出しが
+実際に末尾関数呼び出し（tail call）であるかどうかを判断し ii) tail callである場合は
+`RV16KISD::CALL` ではなく `RV16KISD::TAIL` を発行し iii)
+これに対してパターンマッチを行い `J` ないし `JR` 命令に変換する必要がある。 i) と ii)
+は `RV16KTargetLowering::LowerCall` にて行い iii) はTableGenファイルとして記述する。
+
+まず iii) から実装する。
+はじめ次のように定義したところ `Tail` にパターンマッチしなかった。
+
+....
+def PseudoTAIL : Pseudo<(outs), (ins simm16_lsb0_j:$imm), []>,
+                   PseudoInstExpansion<(J simm16_lsb0_j:$imm)>;
+
+...
+
+def : Pat<(Tail (iPTR tglobaladdr:$dst)),
+          (PseudoTAIL texternalsym:$dst)>;
+....
+
+`ins simm16_lsb0_j` を `ins simm16_lsb0` としたところうまくいった。
+`PseudoBR` のときと同様の症状に見えるが対処方法が微妙に違う。
+`ImmLeaf` を継承した型でないと `tglobaladdr` などにパターンマッチできない？
+しかしRISC-Vの `bare_symbol` などはこの限りでないように見える。
+全くわからない。TODO 結局 `tglobaladdr` などが即値のパターンにマッチするのが
+すべての元凶のように思えるが……。
+
+RISC-Vでは `Tail` のパターンマッチに `(iPTR ...)` を挟んでいる。
+RV16Kは16bitアーキテクチャなのでfootnote:[RV16Kバックエンドの記述の、具体的に
+どの部分がこれを定めているかははっきりしない。TODO]、
+これは `(i16 ...)` と等価であると推察される。
+実際これを `(i16 ...)` と書き換えてもテストに通った。一方で `(i8 ...)` や `(i32 ...)` では
+動作しなかった。一方で `iPTR` を単純に削除し `...` の部分のみとしても動作した。
+そこでとりあえずはこれを削除した形で記述した。
+
+`Tail` がレジスタを取る場合、パターンマッチによって `PseudoTAILIndirect` に変換される。
+ここで使用できるレジスタはcaller-savedなレジスタに限られる。
+というのも、RISC-Vバックエンドのコメントによれば、tail callが行われる直前には、
+callee-savedなレジスタの値の復帰が行われるため、分岐先のアドレスを保持する
+レジスタの中身が打ち消されてしまうからである。
+そこで新たに `GPRTC` というレジスタクラスを定義し `PseudoTAILIndirect` はこれをオペランドと
+している。
+
+次に ii) を記述する。 `IsTailCall` が立っている場合は、通常の関数呼び出しを表す
+`CALLSEQ_START/CALL/CALLSEQ_END` の出力を抑止し、代わりに `TAIL` を出力する。
+なおtail callの場合preserved maskをオペランドに追加する必要はない。
+おそらくこれはtail call後に実行される同関数中のコードが存在しないためであると考えられる。
+したがってtail callが存在する場合のpreserved mask追加も害はない。
+実際Mipsバックエンドは追加している。
+またRV16Kバックエンドで試しても、テストを通過した。
+
+最後に i) を実装する。具体的には
+`RV16KTargetLowering::IsEligibleForTailCallOptimization` の実装を行う。
+この関数は、LLVM IRでは `tail call` となっている関数について、
+本当にtail callしてよいかを判断する。
+
+関数宣言がweak symbol<<wikipedia-weak_symbol>>の場合tail callの挙動は実装依存となるため
+行わない。
+
+tail callのcallerが保存するレジスタをcalleeも保存しているかをチェックしている。
+
+構造体をbyvalで引数として渡す関数をtail callしたい場合一筋縄ではいかない。
+というのもこのような場合、構造体はcaller側のstackに保存され、
+そのポインタが引数として渡される。しかしtail callでは
+calleeがcallerのスタック領域を使用する（これによってメモリ使用量を削減する）ため、
+ナイーブな実装では引数として渡された構造体を壊してしまう。
+実際これを処理するためのwork-aroundは存在し、
+x86向けバックエンドでは使用されているようだが、
+RISC-Vを始めとする他のバックエンドでは、byvalで引数を渡す場合は
+単にtail callしないという選択をしている。RV16Kもこれに従う。
+
+== 構造体を正しく扱う
+
+次のようなテストコードを正しく動かしたい。これを動かすと `0` が
+返却されるはずだが、現時点では `-1` が返ってきてしまう。
+
+....
+struct hoge {
+    int x, y;
+};
+
+struct hoge piyo(struct hoge h)
+{
+    if (h.x < 0) return h;
+
+    h.x -= 1;
+    h.y -= 1;
+    struct hoge ret = piyo(h);
+    return ret;
+}
+
+int main()
+{
+    struct hoge h = {1, 2};
+    return piyo(h).y;
+}
+....
+
+上のコードをコンパイルすると、
+`piyo` の戻り値から `y` を取り出すために「 `piyo` の戻り値の構造体が入った
+アドレスに `2` を `or` して `y` のアドレスとする」というアセンブリが
+出力される。ここで `or` は `add` の代替として機能することが
+期待されている。これは `bin/llc` に `-debug` をつけると、
+次のように変換されていることから分かる。
+
+....
+Creating new node: t17: ch,glue = callseq_start t15, TargetConstant:i16<0>, TargetConstant:i16<0>
+Creating new node: t19: ch,glue = CopyToReg t17, Register:i16 $x8, FrameIndex:i16<0>
+Creating new node: t21: ch,glue = CopyToReg t19, Register:i16 $x9, FrameIndex:i16<1>, t19:1
+Creating new node: t24: ch,glue = RV16KISD::CALL t21, TargetGlobalAddress:i16<void (%struct.hoge*, %struct.hoge*)* @piyo> 0, Register:i16 $x8, Register:i16 $x9, RegisterMask:Untyped, t21:1
+Creating new node: t25: ch,glue = callseq_end t24, TargetConstant:i16<0>, TargetConstant:i16<0>, t24:1
+Creating new node: t26: i16 = add nuw FrameIndex:i16<0>, Constant:i16<2>
+Creating new node: t27: i16,ch = load<(dereferenceable load 2 from %ir.y, !tbaa !7)> t25, t26, undef:i16
+
+...
+
+Combining: t26: i16 = add nuw FrameIndex:i16<0>, Constant:i16<2>
+Creating new node: t30: i16 = or FrameIndex:i16<0>, Constant:i16<2>
+ ... into: t30: i16 = or FrameIndex:i16<0>, Constant:i16<2>
+....
+
+この変換は `llvm/lib/CodeGen/SelectionDAG/DAGCombiner.cpp` の
+`visitADD` にて次のように行われている。
+
+  // fold (a+b) -> (a|b) iff a and b share no bits.
+  if ((!LegalOperations || TLI.isOperationLegal(ISD::OR, VT)) &&
+      DAG.haveNoCommonBitsSet(N0, N1))
+    return DAG.getNode(ISD::OR, DL, VT, N0, N1);
+
+しかし実際には、RV16Kにおいて `piyo` の戻り値が格納されるアドレスは2バイトで
+アラインされるため、このような `add` を `or` に変換する操作は正しく
+動かない場合がある。 `visitADD` では
+`DAG.haveNoCommonBitsSet` を呼び出すことでこのチェックを
+行っているように見えるが、frame indexが対象の場合は、
+このチェックをすり抜けてしまう（後述）footnote:[また
+以下のパターンマッチで使用する `isOrEquivalentToAdd` でも
+同様のチェックを行っているが、これも後述する同様の理由ですり抜けてしまう。]。
+
+これを解決するには i) このような `or` への変換を無効化したり ii) frame indexに
+対する即値の `or` をメモリ操作のdisplacementとする などが考えられる。
+RV16Kにおいてはこのような場合に `or` へ変換することはそもそも間違っている
+ため i) の対処が本来である。しかしLLVMにおいてこれをどのように
+無効化すればよいか判然としない（後述；TODO）。
+そこで今回は ii) によって対処する。
+なおこれはRISC-Vも採用している手法である<<github_riscv-llvm_patch_22>>
+footnote:[ただし上記と同様のCテストコードをRISC−Vバックエンドに入力した
+ところ、同じような問題は発生しなかった。良くわからない。TODO]。
+
+具体的には<<github_riscv-llvm_patch_22>>を参考にして次のような
+パターンを追加する。
+
+    def : Pat<(load (IsOrAdd AddrFI:$rs1, simm16_lsb0:$imm16)),
+              (LW AddrFI:$rs1, simm16_lsb0:$imm16)>;
+
+ここで使用される `IsOrAdd` は次のように定義される述語である。
+
+    def IsOrAdd: PatFrag<(ops node:$A, node:$B), (or node:$A, node:$B), [{
+      return isOrEquivalentToAdd(N);
+    }]>;
+
+これでうまく動作する。
+
+さてではなぜ上記のようなチェックが機能しないのか。
+それは**具体的な値が確定するまでframe indexは `0` として扱われて
+いるから**である（多分）。
+
+== RISC-VとRV16Kの比較
+
+生成されるオブジェクトのサイズの比較を行いたい。
+これはRV16KがRISC-Vと比べてどの程度今回の目的（ROMが極めて小さい）に
+特化出来ているかの指標の1つになりうる。
+
+RV16KとRISC-Vのバックエンドの両方でテスト用Cコードを
+オブジェクトファイルにコンパイルし、両者の `.text` 部分のサイズを
+取得する。掛け算・割り算の扱い方や、構造体値渡しのconventionなど
+単純に比較できない要素は数多くあるが、1つの指標にはなる。
+
+LLVMをビルドしたディレクトリで、次のようなワンライナーを実行する。
+なおこれの実行には、RISC-Vクロスコンパイル用にビルドしたGCCが必要である。
+
+    ls ~/ano/secure_vm/rv16k-test/build_and_test/test/00*.c | \
+    while read line; do \
+        echo $(basename $line); \
+        echo "\tRV16K          $(bin/clang -target rv16k -Oz -c -o - $line | \
+                         bin/llvm-readelf -S | \
+                         grep " .text" | \
+                         sed -E 's/ +/ /g' | \
+                         cut -d' ' -f8)"; \
+        echo "\tRV32EC (GCC)   $(~/workspace/riscv-gnu-toolchain/build/bin/riscv32-unknown-elf-gcc -march=rv32ec -mabi=ilp32e -Os -c -o _tetete.o $line && \
+                          bin/llvm-readelf -S _tetete.o | \
+                          sed -E 's/ +/ /g' | \
+                          grep " .text" | \
+                          cut -d' ' -f8 | \
+                          awk '{s+=strtonum("0x"$1)} END {printf "%06x",s}' )"; rm -f _tetete.o; \
+        echo "\tRV32IC (LLVM)  $(bin/clang -target riscv32 -march=rv32ic -Oz -c -o - $line | \
+                          bin/llvm-readelf -S | \
+                          grep " .text" | \
+                          sed -E 's/ +/ /g' | \
+                          cut -d' ' -f8)"; \
+        echo "\tRV32IC (GCC)   $(~/workspace/riscv-gnu-toolchain/build/bin/riscv32-unknown-elf-gcc -march=rv32ic -mabi=ilp32e -Os -c -o _tetete.o $line && \
+                          bin/llvm-readelf -S _tetete.o | \
+                          sed -E 's/ +/ /g' | \
+                          grep " .text" | \
+                          cut -d' ' -f8 | \
+                          awk '{s+=strtonum("0x"$1)} END {printf "%06x",s}' )"; rm -f _tetete.o; \
+    done
+
+結果は次のようであった。
+
+    0001.c
+        RV16K          000006
+        RV32IC (LLVM)  000006
+        RV32EC (GCC)   000006
+    0002-fib.c
+        RV16K          00003e
+        RV32IC (LLVM)  000044
+        RV32EC (GCC)   00003c
+    0003-bf.c
+        RV16K          000162
+        RV32IC (LLVM)  0000f2
+        RV32EC (GCC)   0001aa
+    0004-lisp.c
+        RV16K          000176
+        RV32IC (LLVM)  00016e
+        RV32EC (GCC)   00017e
+    0005-prime.c
+        RV16K          00009c
+        RV32IC (LLVM)  000082
+        RV32EC (GCC)   000082
+    0006-editdis.c
+        RV16K          0000d6
+        RV32IC (LLVM)  00009e
+        RV32EC (GCC)   0000de
+    0007-perceptron.c
+        RV16K          000148
+        RV32IC (LLVM)  000132
+        RV32EC (GCC)   000134
+    0008-rpn.c
+        RV16K          000110
+        RV32IC (LLVM)  0000e4
+        RV32EC (GCC)   0000e2
+    0009-gameoflife.c
+        RV16K          0001c4
+        RV32IC (LLVM)  000166
+        RV32EC (GCC)   000130
+    0010-struct.c
+        RV16K          000100
+        RV32IC (LLVM)  000090
+        RV32EC (GCC)   0000a0
+
+あるオブジェクトファイルに登場する命令の種類と数を調べるときは
+次のようにする。RISC-Vの場合 `-riscv-no-aliases` をつけることで、
+圧縮命令に対して `c.` プレフィクスを出力してくれる。
+
+    $ bin/llvm-objdump -d -riscv-no-aliases rpn-rv32ec.o | cut -f3 | egrep -v "^$|:" | sort | uniq -c | sort -nr
+
+=== `lsi/andi/ori/xori/lsli/lsri/asri` など即値命令を追加する
+
+    0001.c
+        RV16K          000006
+        RV32IC (LLVM)  000006
+        RV32EC (GCC)   000006
+    0002-fib.c
+        RV16K          00003a
+        RV32IC (LLVM)  000044
+        RV32EC (GCC)   00003c
+    0003-bf.c
+        RV16K          000146
+        RV32IC (LLVM)  0000f2
+        RV32EC (GCC)   0001aa
+    0004-lisp.c
+        RV16K          000158
+        RV32IC (LLVM)  00016e
+        RV32EC (GCC)   00017e
+    0005-prime.c
+        RV16K          00008c
+        RV32IC (LLVM)  000082
+        RV32EC (GCC)   000082
+    0006-editdis.c
+        RV16K          0000d0
+        RV32IC (LLVM)  00009e
+        RV32EC (GCC)   0000de
+    0007-perceptron.c
+        RV16K          000136
+        RV32IC (LLVM)  000132
+        RV32EC (GCC)   000134
+    0008-rpn.c
+        RV16K          000110
+        RV32IC (LLVM)  0000e4
+        RV32EC (GCC)   0000e2
+    0009-gameoflife.c
+        RV16K          0001be
+        RV32IC (LLVM)  000166
+        RV32EC (GCC)   000130
+    0010-struct.c
+        RV16K          0000fa
+        RV32IC (LLVM)  000090
+        RV32EC (GCC)   0000a0
+
+多少下がる。
+
+=== `lw0` と `sw0` を追加する
+
+`lw` や `sw` のoffsetが `0` の場合と同等の2byte命令を追加。
+
+    0001.c
+        RV16K          000006
+        RV32IC (LLVM)  000006
+        RV32EC (GCC)   000006
+    0002-fib.c
+        RV16K          00003a
+        RV32IC (LLVM)  000044
+        RV32EC (GCC)   00003c
+    0003-bf.c
+        RV16K          00013e
+        RV32IC (LLVM)  0000f2
+        RV32EC (GCC)   0001aa
+    0004-lisp.c
+        RV16K          000144
+        RV32IC (LLVM)  00016e
+        RV32EC (GCC)   00017e
+    0005-prime.c
+        RV16K          000086
+        RV32IC (LLVM)  000082
+        RV32EC (GCC)   000082
+    0006-editdis.c
+        RV16K          0000c8
+        RV32IC (LLVM)  00009e
+        RV32EC (GCC)   0000de
+    0007-perceptron.c
+        RV16K          000120
+        RV32IC (LLVM)  000132
+        RV32EC (GCC)   000134
+    0008-rpn.c
+        RV16K          0000f8
+        RV32IC (LLVM)  0000e4
+        RV32EC (GCC)   0000e2
+    0009-gameoflife.c
+        RV16K          0001be
+        RV32IC (LLVM)  000166
+        RV32EC (GCC)   000130
+    0010-struct.c
+        RV16K          0000e8
+        RV32IC (LLVM)  000090
+        RV32EC (GCC)   0000a0
+
+そこそこ縮んだ。
+
+=== `addi` の即値フィールドを6bitに増やす
+
+新たに `addib` 命令を追加し、即値フィールドを6bitとする。
+
+    0001.c
+        RV16K          000006
+        RV32IC (LLVM)  000006
+        RV32EC (GCC)   000006
+    0002-fib.c
+        RV16K          00003a
+        RV32IC (LLVM)  000044
+        RV32EC (GCC)   00003c
+    0003-bf.c
+        RV16K          000136
+        RV32IC (LLVM)  0000f2
+        RV32EC (GCC)   0001aa
+    0004-lisp.c
+        RV16K          00013c
+        RV32IC (LLVM)  00016e
+        RV32EC (GCC)   00017e
+    0005-prime.c
+        RV16K          00007e
+        RV32IC (LLVM)  000082
+        RV32EC (GCC)   000082
+    0006-editdis.c
+        RV16K          0000c0
+        RV32IC (LLVM)  00009e
+        RV32EC (GCC)   0000de
+    0007-perceptron.c
+        RV16K          000114
+        RV32IC (LLVM)  000132
+        RV32EC (GCC)   000134
+    0008-rpn.c
+        RV16K          0000f8
+        RV32IC (LLVM)  0000e4
+        RV32EC (GCC)   0000e2
+    0009-gameoflife.c
+        RV16K          0001be
+        RV32IC (LLVM)  000166
+        RV32EC (GCC)   000130
+    0010-struct.c
+        RV16K          0000d0
+        RV32IC (LLVM)  000090
+        RV32EC (GCC)   0000a0
+
+微妙。
+
+=== `add3 rd, rs1, rs2` を追加する
+
+3オペランド命令を追加する。次のようにパターンマッチさせる。
+
+    def : Pat<(add GPRC:$rs1, GPRC:$rs2), (ADD3 GPRC:$rs1, GPRC:$rs2)>;
+    def : Pat<(add GPR:$rs1, GPR:$rs2), (ADD GPR:$rs1, GPR:$rs2)>;
+
+結果は次の通り。
+
+    0001.c
+        RV16K          000006
+        RV32IC (LLVM)  000006
+        RV32EC (GCC)   000006
+    0002-fib.c
+        RV16K          000038
+        RV32IC (LLVM)  000044
+        RV32EC (GCC)   00003c
+    0003-bf.c
+        RV16K          000134
+        RV32IC (LLVM)  0000f2
+        RV32EC (GCC)   0001aa
+    0004-lisp.c
+        RV16K          00013a
+        RV32IC (LLVM)  00016e
+        RV32EC (GCC)   00017e
+    0005-prime.c
+        RV16K          000082
+        RV32IC (LLVM)  000082
+        RV32EC (GCC)   000082
+    0006-editdis.c
+        RV16K          0000be
+        RV32IC (LLVM)  00009e
+        RV32EC (GCC)   0000de
+    0007-perceptron.c
+        RV16K          000110
+        RV32IC (LLVM)  000132
+        RV32EC (GCC)   000134
+    0008-rpn.c
+        RV16K          000108
+        RV32IC (LLVM)  0000e4
+        RV32EC (GCC)   0000e2
+    0009-gameoflife.c
+        RV16K          0001a6
+        RV32IC (LLVM)  000166
+        RV32EC (GCC)   000130
+    0010-struct.c
+        RV16K          0000d0
+        RV32IC (LLVM)  000090
+        RV32EC (GCC)   0000a0
+
+`gameoflife.c` のサイズは若干小さくなるが、むしろ `rpn.c` などサイズが大きく
+なっているバイナリがあることに注意が必要。
+TableGenによるパターンマッチでは最初に書いたパターンを優先して採用するため、
+このような場合では `add3` のみが
+使用されfootnote:[ただし関数プロローグ・エピローグでの `sp` の操作など、
+直接 `add` を生成する場合は除く。]、レジスタの使用に制限が発生したことが
+原因と思われる。
+
+2オペランドの命令を基調としているところに3オペランドの命令を追加するのは
+難しい。RISC-VのRV32CはRV32Iのコードサイズを削減することが主目的であるため、
+RV32IからRV32Cへの1:1対応として処理すれば良い。しかしRV16Kは2オペランドの
+体系のため、この一部を3オペランドに変換するというのは非自明な処理である。
+というのも、命令選択の時点では、レジスタクラスは分かっても、
+どのレジスタを使用するかはわからない。そもそも `add3` が適用可能かどうかが
+わからないのである。
+
+=== IRレベルで定数読み込みのコストを考慮に入れる
+
+より効率的なコード生成のために、IRレベルで行われる変形（transformation）に
+対してコード生成時の情報を提供する。具体的にはconstant materializingの
+コストを伝えるようにする。これには `TargetTransformInfo` の
+RV16K版を定義する必要がある。
+
+IRレベルにおける「コスト」は、通常の命令（ `add` など）を1として
+考える。これは加算乗除ができる値として捉える必要がある。
+`enum TargetCostConstants` のコメントに詳細がある。
+
+RISC-VではLLVM9にて `TargetTransformInfo` が定義される。これを参考にする。
+
+基本的には即値のサイズと命令の種類ごとに「基本コスト」の何倍かを
+記述する。ここで「基本コスト」は実質的に2バイトのことである。
+
+`LLVMBuild.txt` の `required_libraries` に `Analysis` を追加する必要があった。
+理由不明。TODO
+
+サイズベンチマークをしたところ、全く減らなかった。悲しい。
+
+=== サイズ最適化のときはloop-unrollingを抑止する
+
+ARMがloop unrollingを明示的に抑止しているので、それに習う。
+
+`RV16KTTIImpl::getUnrollingPreferences` を定義し、この中でloop unrollingを無効化する。
+
+全く効果がなかったのでrevertした。
+
+=== `GlobalMergePass` を追加する
+
+ARMが使っているパスで、グローバル変数を一つにまとめることでregister pressureを下げる。
+`lw/sw` のdisplacementを有効活用できるのではないかと追加したが効果なし。revert.
+
+=== `MachineScheduler` を有効化する
+
+なんかRISC-Vが最近有効化してたからしてみた。
+
+    bool enableMachineScheduler() const override { return true; }
+
+コードサイズが増えた。revert.
+
+=== `isLegalAddressingMode/isLegalICmpImmediate/isLegalAddImmediate` を定義
+
+アドレスモード・ `cmpi` が取れる即値幅・ `addi` が取れる即値幅を、
+LLVM IRレベルで利用できるように定義。コードサイズに効果なし。
+これらに関するRISC-Vのコミットでも「LLVMに対して正しいbackendの情報を
+伝えることは間違っていないと思うから追加するけど、このコミットのご利益を表現する
+テストは書けないよ」みたいなことが書いてある。
+
+=== `isZextFree` を定義
+
+符号なし8bitの値をメモリから読み込む際に `zext` が使われないことを保証する。
+
+実装したが効果なし。revert.
+
+=== 再実体化（remat; rematerialization）の実装
+
+再実体化とは、複数回使用されるような値を一度だけ計算しレジスタやメモリに格納しておく
+共通部分式除去とは**逆に**、毎回計算することにより実行時間を減少させたり、
+レジスタ・メモリ使用量に余裕をもたせる最適化である<<wikipedia-remat>>
+footnote:[<<nakata-compiler>>では「再計算」と訳されている。このほうが分かりやすい
+かもしれない。]。RISC-Vによる実装を参考にする<<llvm_phabricator-d46182>>。
+
+LLVMでは結局、即値を即値ロードの命令に変換することをmaterializeと呼び、
+その逆をrematerializeと読んでいるようだ？
+
+やることは単純で `li` と `lsi` に `isReMaterializable` フラグを立てれば良い。
+<<llvm_phabricator-d46182>>でも指摘されているように、
+このフラグが立ったからといって必ずrematが行われるわけではなく、
+あくまでヒントとして使用される。
+
+コードサイズは変化しなかった。revert.
+
+== LLVM9に移行する
+
+LLVM9が9/19に公開されたfootnote:[もちろんLLVMはOSSのため、9/19以前から
+「公開」されていたのだが、言葉の綾である。]。そこで、これまでLLVM8にて開発してきた
+RV16KバックエンドをLLVM9に対応させたい。
+
+RISC-Vバックエンドを独自に作っている<<fpga_develop_diary>>では
+LLVM8から9にポートした際の記事が公開されている<<fpga_develop_diary-to_llvm9>>。
+
+まず `rv16k-toward-v3` ブランチをLLVM9とマージする。これには `git rebase --onto` が使える。
+
+    $ git rebase --onto llvmorg-9.0.0 llvmorg-8.0.0 rv16k-toward-v3
+
+次にこれをビルドする。RISC-Vはもはやexperimentalではない。
+
+    $ cmake -G Ninja \
+        -DLLVM_ENABLE_PROJECTS="clang;lld" \
+        -DCMAKE_BUILD_TYPE="Debug" \
+        -DBUILD_SHARED_LIBS=True \
+        -DLLVM_USE_SPLIT_DWARF=True \
+        -DLLVM_OPTIMIZED_TABLEGEN=True \
+        -DLLVM_BUILD_TESTS=True \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DLLVM_USE_LINKER=lld \
+        -DLLVM_TARGETS_TO_BUILD="X86;RISCV" \
+        -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="RV16K" \
+        ~/ano/secure_vm/llvm-project/llvm
+        ../llvm
+    $ cmake --build .
+
+もちろんLLVM8と9で異なっている部分があるため、ビルドがコケる。適宜修正する。
+
+- LLVM8まではレジスタは単なる `unsigned` の整数値であったが、
+これをラップするものとして新たに `Register` クラスが導入された<<llvm_phabricator-rl364191>>。
+具体的には `MachineOperand::getReg` の戻り値が `Register` に変更され、
+それに依存する他の部分も変更されている。RV16Kバックエンドの場合は
+`RV16KRegisterInfo::getFrameRegister` の戻り値の型のみを変更した。
+- `AsmPrinter` の `AsmVariant` を活用しているバックエンドはx86のみだったため
+削除されたらしい<<llvm_phabricator-d60488>>。合わせて削除する。
+- LLDにおけるコーディング規約が変更され、
+変数名が小文字から始まるようになった<<llvm_phabricator-d64121>>
+footnote:[現在LLVMでは大文字始まり（CamlCase）の変数名が
+原則使用されている<<llvm-codingstandards>>が、
+これを小文字始まり（camlBack）に変更しようという動きがある<<llvm_dev_ml-134921>>。
+その試行として、LLDにおいて実際に変更が行われた。]。これに伴い、
+継承元のメンバ変数を参照する部分などでは書き換えを要する。具体的には
+`RV16K::RV16K` で上書きする `NoneRel` メンバ変数などが該当する。
+
+以上の変更によりビルドが可能になった。コードサイズのベンチマークは次のように変化した。
+
+    0001.c
+        RV16K          000006
+        RV32EC (GCC)   000006
+        RV32IC (LLVM)  000008
+        RV32IC (GCC)   000006
+    0002-fib.c
+        RV16K          00003a
+        RV32EC (GCC)   00003c
+        RV32IC (LLVM)  000046
+        RV32IC (GCC)   00003c
+    0003-bf.c
+        RV16K          00013a
+        RV32EC (GCC)   0001aa
+        RV32IC (LLVM)  0000e6
+        RV32IC (GCC)   0000ec
+    0004-lisp.c
+        RV16K          00013c
+        RV32EC (GCC)   00017e
+        RV32IC (LLVM)  00017a
+        RV32IC (GCC)   00017e
+    0005-prime.c
+        RV16K          00007a
+        RV32EC (GCC)   000082
+        RV32IC (LLVM)  000082
+        RV32IC (GCC)   000082
+    0006-editdis.c
+        RV16K          0000c2
+        RV32EC (GCC)   0000de
+        RV32IC (LLVM)  0000b0
+        RV32IC (GCC)   0000ca
+    0007-perceptron.c
+        RV16K          00013c
+        RV32EC (GCC)   000134
+        RV32IC (LLVM)  000158
+        RV32IC (GCC)   000134
+    0008-rpn.c
+        RV16K          0000fc
+        RV32EC (GCC)   0000e2
+        RV32IC (LLVM)  0000d8
+        RV32IC (GCC)   0000e2
+    0009-gameoflife.c
+        RV16K          0001c6
+        RV32EC (GCC)   000130
+        RV32IC (LLVM)  000176
+        RV32IC (GCC)   000130
+    0010-struct.c
+        RV16K          0000d0
+        RV32EC (GCC)   0000a0
+        RV32IC (LLVM)  000092
+        RV32IC (GCC)   0000a4
+
+悪化したfootnote:[は？]footnote:[LLVMのRV32ICもコードサイズが大きくなっていることから、
+LLVM coreが悪化したように見える。は？]footnote:[キレた。]。
+
+`git checkout` を使って、この変更が為される前後での挙動を見てみると、
+`MachineBlockPlacement` への変更<<llvm_phabricator-d43256>>により
+挙動が変わっている。
+
+この変更は次のようなbasic blockのスケジューリングを行うパスである。
+例えば次のようなCFGがあるとする。ここで `for.body` や `for.inc` から
+2本の矢印が伸びているのは、そのbasic blockの内部または末尾から、
+どちらかのbasic blockに分岐する（fall-throughを含む）ことを意味している。
+
+        entry
+          |
+          V
+    -->for.body
+    |     |\
+    |     | \
+    |     |  \
+    |     | if.then3
+    |     |  /
+    |     | /
+    |     |/
+    ---for.inc
+          |
+          V
+    for.cond.cleanup
+
+このとき、仮に次のように命令をスケジュールしたとする。
+
+    entry
+    for.body
+    if.then3
+    for.inc
+    for.cond.cleanup
+
+`if.then3` のbasic blockが一度も実行されないとすると、
+ループは次のように回ることになる。
+
+       ...
+    -> for.body
+    -> （ジャンプ） for.inc
+    -> （ジャンプ） for.body
+       ...
+
+したがって、ループ中2回ジャンプする。
+
+次に、以下のようにスケジュールしてみる。
+
+    entry
+    for.inc
+    for.body
+    if.then3
+    for.cond.cleanup
+
+すると、ループは次のように回る。
+
+       ...
+    -> for.body
+    -> （ジャンプ） for.inc
+    -> for.body
+       ...
+
+したがって、ループ中のジャンプは1回で済むことになる。
+
+しかし上記の図には**`entry` 末尾から `for.cond.cleanup` への条件分岐が
+明記されていない**。この分だけバイナリサイズとして不利である。
+
+`rpn.c` のbefore/afterを見てみると、このパスによるメリットは無いように見える。
+過剰に変換を行っているということだろうか？
+
+`Bcc` の条件が絶対に成り立たないことを見抜いて `J` に変換する
+機能がなくなっているっぽい。なんもわからん。TODO
+
+ところでLLVM9では `llvm-objdump` の出力形式も変更されているようだ。謎。TODO
+
+== --- DONE LINE ---
+
+== malloc/freeの実装
+
+bss領域の後ろからheapにすればいいが、512Bに収まるようなmalloc/freeが書けるかどうか。
+
+== 命令スケジューリングのための情報を命令に付加する
+
+Instruction itineraries
+
+命令ごとのサイクル数などを考慮？<<fox-llvm>>
+
+== アドレッシング・モード
+
+SparcやLanaiでは `reg + imm` のアドレッシング・モードを `ComplexPattern` を
+使用してパターンマッチしている。すなわち `(load reg0, (add reg1 + imm))` に対する
+パターンマッチを `SelectADDRri` などで `(lw reg0, reg1, imm)` に変換している？
+これは `MIOperandInfo` と結びついて `ins` として扱われる。
+従って `SelectInlineAsmMemoryOperand` では `(load reg, (add reg + imm))` に
+対するパターンマッチを実施する必要がある？　のか？　分からん。TODO
+これをどうやってビット列に結びつけているかまったくの不明。
+
+一方RISC-Vでは明確なアドレッシング・モードの定義はなく、
+TableGenレベルのパターンマッチで対応している。
+
+== 関数の可変長引数に対応する
+
+<<github_riscv-llvm_patch_26>>
+
+== コマンドライン引数対応
+
+RAMをいじればいいはずだが面倒そう。
+
+== デバッグ情報を出力する
+
+https://github.com/lowRISC/riscv-llvm/blob/master/0047-RISCV-Initial-support-for-emitting-call-frame-inform.patch
+
+[bibliography]
+== 参照
+
+- [[[github_riscv-llvm_docs_01,1]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/01-intro-and-building-llvm.mkd
+- [[[llvm_getting-started,2]]] https://llvm.org/docs/GettingStarted.html
+- [[[clang_gettings-started,3]]] https://clang.llvm.org/get_started.html
+- [[[asciidoctor_user-manual,4]]] https://asciidoctor.org/docs/user-manual/
+- [[[riscv,5]]] https://riscv.org/
+- [[[riscv_specifications,6]]] https://riscv.org/specifications/
+- [[[fox-llvm,7]]] 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』（柏木 餅子・風薬・矢上 栄一、株式会社インプレス、2013年）
+- [[[github_riscv-llvm_docs_02,8]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/02-starting-the-backend.mkd
+- [[[github_riscv-llvm_patch_02,9]]] https://github.com/lowRISC/riscv-llvm/blob/master/0002-RISCV-Recognise-riscv32-and-riscv64-in-triple-parsin.patch
+- [[[github_riscv-llvm,10]]] https://github.com/lowRISC/riscv-llvm
+- [[[youtube_llvm-backend-development-by-example,11]]] https://www.youtube.com/watch?v=AFaIP-dF-RA
+- [[[msyksphinz_try-riscv64-llvm-backend,12]]] http://msyksphinz.hatenablog.com/entry/2019/01/02/040000_1
+- [[[github_riscv-llvm_patch_03,13]]] https://github.com/lowRISC/riscv-llvm/blob/master/0003-RISCV-Add-RISC-V-ELF-defines.patch
+- [[[github_riscv-llvm_patch_04,14]]] https://github.com/lowRISC/riscv-llvm/blob/master/0004-RISCV-Add-stub-backend.patch
+- [[[github_riscv-llvm_patch_06,15]]] https://github.com/lowRISC/riscv-llvm/blob/master/0006-RISCV-Add-bare-bones-RISC-V-MCTargetDesc.patch
+- [[[github_riscv-llvm_patch_10,16]]] https://github.com/lowRISC/riscv-llvm/blob/master/0010-RISCV-Add-support-for-disassembly.patch
+- [[[llvm-writing_backend-operand_mapping,17]]] https://llvm.org/docs/WritingAnLLVMBackend.html#instruction-operand-mapping
+- [[[llvm-writing_backend,18]]] https://llvm.org/docs/WritingAnLLVMBackend.html
+- [[[github_riscv-llvm_patch_07,19]]] https://github.com/lowRISC/riscv-llvm/blob/master/0007-RISCV-Add-basic-RISCVAsmParser.patch
+- [[[github_riscv-llvm_patch_08,20]]] https://github.com/lowRISC/riscv-llvm/blob/master/0008-RISCV-Add-RISCVInstPrinter-and-basic-MC-assembler-te.patch
+- [[[llvm-tablegen,21]]] https://llvm.org/docs/TableGen/index.html
+- [[[github_riscv-llvm_patch_09,22]]] https://github.com/lowRISC/riscv-llvm/blob/master/0009-RISCV-Add-support-for-all-RV32I-instructions.patch
+- [[[llvm_dev_ml-tablegen_definition_question,23]]] http://lists.llvm.org/pipermail/llvm-dev/2015-December/093310.html
+- [[[llvm_doxygen-twine,24]]] https://llvm.org/doxygen/classllvm_1_1Twine.html
+- [[[llvm-tablegen-langref,25]]] https://llvm.org/docs/TableGen/LangRef.html
+- [[[github_riscv-llvm_docs_05,26]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/05-disassembly.mkd
+- [[[github_riscv-llvm_patch_11,27]]] https://github.com/lowRISC/riscv-llvm/blob/master/0011-RISCV-Add-common-fixups-and-relocations.patch
+- [[[github_riscv-llvm_docs_06,28]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/06-relocations-and-fixups.mkd
+- [[[github_riscv-llvm_patch_13,29]]] https://github.com/lowRISC/riscv-llvm/blob/master/0013-RISCV-Initial-codegen-support-for-ALU-operations.patch
+- [[[speakerdeck-llvm_backend_development,30]]] https://speakerdeck.com/asb/llvm-backend-development-by-example-risc-v
+- [[[llvm-code_generator,31]]] https://llvm.org/docs/CodeGenerator.html
+- [[[llvm-code_generator-target_independent_code_gen_alg,32]]] https://llvm.org/docs/CodeGenerator.html#target-independent-code-generation-algorithms
+- [[[llvm-code_generator-selectiondag_instruction_selection,33]]] https://llvm.org/docs/CodeGenerator.html#selectiondag-instruction-selection-process
+- [[[github_riscv-llvm_patch_15,34]]] https://github.com/lowRISC/riscv-llvm/blob/master/0015-RISCV-Codegen-support-for-memory-operations.patch
+- [[[cpu0,35]]] https://jonathan2251.github.io/lbd/
+- [[[elvm-llvm_backend,36]]] https://github.com/shinh/llvm/tree/elvm
+- [[[elvm-slide,37]]] http://shinh.skr.jp/slide/llel/000.html
+- [[[github_riscv-llvm_patch_16,38]]] https://github.com/lowRISC/riscv-llvm/blob/master/0016-RISCV-Codegen-support-for-memory-operations-on-globa.patch
+- [[[github_riscv-llvm_patch_17,39]]] https://github.com/lowRISC/riscv-llvm/blob/master/0017-RISCV-Codegen-for-conditional-branches.patch
+- [[[todai_llvm_backend,40]]] https://github.com/cpu-experiment-2018-2/llvm/tree/master/lib/Target/ELMO
+- [[[todai_llvm_backend-article,41]]] http://uenoku.hatenablog.com/entry/2018/12/25/044244
+- [[[github_riscv-llvm_patch_18,42]]] https://github.com/lowRISC/riscv-llvm/blob/master/0018-RISCV-Support-for-function-calls.patch
+- [[[llvm-langref,43]]] http://llvm.org/docs/LangRef.html
+- [[[fpga_develop_diary,44]]] http://msyksphinz.hatenablog.com/
+- [[[llvm-anton_korobeynikov_2012,45]]] https://llvm.org/devmtg/2012-04-12/Slides/Workshops/Anton_Korobeynikov.pdf
+- [[[llvm-welcome_to_the_back_end_2017,46]]] https://www.youtube.com/watch?v=objxlZg01D0
+- [[[ean10-howto-llvmas,47]]] https://www.embecosm.com/appnotes/ean10/ean10-howto-llvmas-1.0.html
+- [[[lowrisc-devmtg18,48]]] https://www.lowrisc.org/llvm/devmtg18/
+- [[[LLVMBackend_2015_03_26_v2,49]]] http://www.inf.ed.ac.uk/teaching/courses/ct/other/LLVMBackend-2015-03-26_v2.pdf
+- [[[rui-compilerbook,50]]] https://www.sigbus.info/compilerbook
+- [[[krister-writing_gcc_backend,51]]] https://kristerw.blogspot.com/2017/08/writing-gcc-backend_4.html
+- [[[llvm-ml-129089,52]]] http://lists.llvm.org/pipermail/llvm-dev/2019-January/129089.html
+- [[[llvm-langref-datalayout,53]]] https://llvm.org/docs/LangRef.html#langref-datalayout
+- [[[github-frasercrmck_llvm_leg,54]]] https://github.com/frasercrmck/llvm-leg/tree/master/lib/Target/LEG
+- [[[llvm_doxygen-InitMCRegisterInfo,55]]] https://llvm.org/doxygen/classllvm_1_1MCRegisterInfo.html#a989859615fcb74989b4f978c4d227a03
+- [[[llvm-programmers_manual,56]]] http://llvm.org/docs/ProgrammersManual.html
+- [[[llvm-writing_backend-calling_conventions,57]]] https://llvm.org/docs/WritingAnLLVMBackend.html#calling-conventions
+- [[[riscv-calling,58]]] https://riscv.org/wp-content/uploads/2015/01/riscv-calling.pdf
+- [[[llvm_dev_ml-how_to_debug_instruction_selection,59]]] http://lists.llvm.org/pipermail/llvm-dev/2017-August/116501.html
+- [[[fpga_develop_diary-20190612040000,60]]] http://msyksphinz.hatenablog.com/entry/2019/06/12/040000
+- [[[llvm_dev_ml-br_cc_questions,61]]] http://lists.llvm.org/pipermail/llvm-dev/2014-August/075303.html
+- [[[llvm_dev_ml-multiple_result_instrs,62]]] https://groups.google.com/forum/#!topic/llvm-dev/8kPOj-_lbGk
+- [[[stackoverflow-frame_lowering,63]]] https://stackoverflow.com/questions/32872946/what-is-stack-frame-lowering-in-llvm
+- [[[llvm_dev_ml-selecting_frame_index,64]]] https://groups.google.com/d/msg/llvm-dev/QXwtqgau-jA/PwnHDF0gG_oJ
+- [[[fpga_develop_diary-llvm,65]]] https://github.com/msyksphinz/llvm/tree/myriscvx/impl90/lib/Target/MYRISCVX
+- [[[llvm-github_cd44ae,66]]] https://github.com/llvm/llvm-project/commit/cd44aee3da22f9a618f2e63c226bebf615fa8cf8
+- [[[llvm_phabricator-d43752,67]]] https://reviews.llvm.org/D43752
+- [[[llvm-compilerwriterinfo,68]]] https://llvm.org/docs/CompilerWriterInfo.html
+- [[[wikipedia-The_Gleaners,69]]] https://en.wikipedia.org/wiki/The_Gleaners
+- [[[github_riscv-llvm_patch_20,70]]] https://github.com/lowRISC/riscv-llvm/blob/master/0020-RISCV-Support-and-tests-for-a-variety-of-additional-.patch
+- [[[llvm_phabricator-d47422,71]]] https://reviews.llvm.org/D47422
+- [[[llvm-extendingllvm,72]]] https://llvm.org/docs/ExtendingLLVM.html
+- [[[llvm_dev_ml-001264,73]]] http://lists.llvm.org/pipermail/llvm-dev/2004-June/001264.html
+- [[[llvm_phabricator-d42958,74]]] https://reviews.llvm.org/D42958
+- [[[compiler_rt,75]]] https://compiler-rt.llvm.org/
+- [[[github-riscv_compiler_rt,76]]] https://github.com/andestech/riscv-compiler-rt
+- [[[github_riscv-llvm_patch_27,77]]] https://github.com/lowRISC/riscv-llvm/blob/master/0027-RISCV-Support-stack-frames-and-offsets-up-to-32-bits.patch
+- [[[llvm_phabricator-d44885,78]]] https://reviews.llvm.org/D44885
+- [[[llvm_phabricator-d45859,79]]] https://reviews.llvm.org/D45859
+- [[[llvm-langref-poison_value,80]]] http://llvm.org/docs/LangRef.html#poisonvalues
+- [[[github-emscripten-issues-34,81]]] https://github.com/emscripten-core/emscripten/issues/34
+- [[[switch_lowering_in_llvm,82]]] http://fileadmin.cs.lth.se/cs/education/edan75/part2.pdf
+- [[[github-avr_llvm-issues-88,83]]] https://github.com/avr-llvm/llvm/issues/88
+- [[[asciidoctor-quickref,84]]] https://asciidoctor.org/docs/asciidoc-syntax-quick-reference/
+- [[[llvm_phabricator-d56351,85]]] https://reviews.llvm.org/D56351
+- [[[hatenablog-rhysd-230119,86]]] https://rhysd.hatenablog.com/entry/2017/03/13/230119
+- [[[llvm_dev_ml-115805,87]]] http://lists.llvm.org/pipermail/llvm-dev/2017-July/115805.html
+- [[[github_riscv-llvm_patch_29,88]]] https://github.com/lowRISC/riscv-llvm/blob/master/0029-RISCV-Add-support-for-llvm.-frameaddress-returnaddre.patch
+- [[[github-riscv_llvm-clang,89]]] https://github.com/lowRISC/riscv-llvm/tree/master/clang
+- [[[github-elvm_clang,90]]] https://github.com/shinh/clang/tree/elvm
+- [[[github_riscv-llvm_patch_22,91]]] https://github.com/lowRISC/riscv-llvm/blob/master/0022-RISCV-Support-lowering-FrameIndex.patch
+- [[[llvm_dev_ml-087879,92]]] http://lists.llvm.org/pipermail/llvm-dev/2015-July/087879.html
+- [[[stackoverflow-27467293,93]]] https://stackoverflow.com/questions/27467293/how-to-force-clang-use-llvm-assembler-instead-of-system
+- [[[github-riscv_llvm-clang-03,94]]] https://github.com/lowRISC/riscv-llvm/blob/master/clang/0003-RISCV-Implement-clang-driver-for-the-baremetal-RISCV.patch
+- [[[github_riscv-llvm_patch_25,95]]] https://github.com/lowRISC/riscv-llvm/blob/master/0025-RISCV-Add-custom-CC_RISCV-calling-convention-and-imp.patch
+- [[[llvm_dev_ml-106187,96]]] http://lists.llvm.org/pipermail/llvm-dev/2016-October/106187.html
+- [[[llvm_phabricator-d39322,97]]] https://reviews.llvm.org/D39322
+- [[[cpu0-lld,98]]] http://jonathan2251.github.io/lbt/lld.html
+- [[[youtube-how_to_add_a_new_target_to_lld,99]]] https://www.youtube.com/watch?v=FIXaeRU31Ww
+- [[[llvm-smith_newlldtargetpdf,100]]] https://llvm.org/devmtg/2016-09/slides/Smith-NewLLDTarget.pdf
+- [[[llvm-lld,101]]] https://lld.llvm.org/index.html
+- [[[note-n9948f0cc3ed3,102]]] https://note.mu/ruiu/n/n9948f0cc3ed3
+- [[[lanai-isa,103]]] https://docs.google.com/document/d/1jwAc-Rbw1Mn7Dbn2oEB3-0FQNOwqNPslZa-NDy8wGRo/pub
+- [[[github-blog_os-issues-370,104]]] https://github.com/phil-opp/blog_os/issues/370
+- [[[llvm_phabricator-d61688,105]]] https://reviews.llvm.org/D61688
+- [[[man-xtensa_linux_gnu_ld,106]]] https://linux.die.net/man/1/xtensa-linux-gnu-ld
+- [[[man-elf,107]]] https://linuxjm.osdn.jp/html/LDP_man-pages/man5/elf.5.html
+- [[[llvm_phabricator-d45385,108]]] https://reviews.llvm.org/D45385
+- [[[llvm_phabricator-d47882,109]]] https://reviews.llvm.org/D47882
+- [[[llvm_dev_ml-128257,110]]] https://lists.llvm.org/pipermail/llvm-dev/2018-December/128257.html
+- [[[github_riscv-llvm_patch_31,111]]] https://github.com/lowRISC/riscv-llvm/blob/master/0031-RISCV-Implement-support-for-the-BranchRelaxation-pas.patch
+- [[[github_riscv-llvm_patch_30,112]]] https://github.com/lowRISC/riscv-llvm/blob/master/0030-RISCV-Implement-branch-analysis.patch
+- [[[stackoverflow-5789806,113]]] https://stackoverflow.com/questions/5789806/meaning-of-and-in-c
+- [[[compiler_study_report,114]]] https://proc-cpuinfo.fixstars.com/2018/11/compiler_study_report/
+- [[[github-llvm-bcb36be8e3f5dced36710ba1a2e2206071ccc7ba,115]]] https://github.com/llvm/llvm-project/commit/bcb36be8e3f5dced36710ba1a2e2206071ccc7ba
+- [[[llvm_dev_ml-059799,116]]] http://lists.llvm.org/pipermail/llvm-dev/2013-February/059799.html
+- [[[tricore-llvm-slides,117]]] https://reup.dmcs.pl/wiki/images/7/7a/Tricore-llvm-slides.pdf
+- [[[tricore-llvm,118]]] https://opus4.kobv.de/opus4-fau/files/1108/tricore_llvm.pdf
+- [[[llvm_dev_ml-111697,119]]] http://lists.llvm.org/pipermail/llvm-dev/2017-April/111697.html
+- [[[takayuki-no09,120]]] http://www.ertl.jp/~takayuki/readings/c/no09.html
+- [[[hwenginner-linker,121]]] https://hwengineer.github.io/linker/
+- [[[koikikukan-000300,122]]] http://www.koikikukan.com/archives/2017/04/05-000300.php
+- [[[stackoverflow-57735654_34997577,123]]] https://stackoverflow.com/questions/34997577/linker-script-allocation-of-bss-section#comment57735654_34997577
+- [[[redhat-ld_simple_example,124]]] https://access.redhat.com/documentation/en-US/Red_Hat_Enterprise_Linux/4/html/Using_ld_the_GNU_Linker/simple-example.html
+- [[[llvm_phabricator-d45395,125]]] https://reviews.llvm.org/D45395
+- [[[llvm_phabricator-d45395-398662,126]]] https://reviews.llvm.org/D45395#inline-398662
+- [[[llvm-langref-inline_asm,127]]] http://llvm.org/docs/LangRef.html#inline-assembler-expressions
+- [[[hazymoon-gcc_inline_asm,128]]] http://caspar.hazymoon.jp/OpenBSD/annex/gcc_inline_asm.html
+- [[[github_riscv-llvm_patch_28,129]]] https://github.com/lowRISC/riscv-llvm/blob/master/0028-RISCV-Add-basic-support-for-inline-asm-constraints.patch
+- [[[llvm-langref-inline_asm-asm_template_argument_modifier,130]]] http://llvm.org/docs/LangRef.html#asm-template-argument-modifiers
+- [[[github-llvm-0715d35ed5ac2312951976bee2a0d2587f98f39f,131]]] https://github.com/llvm/llvm-project/commit/0715d35ed5ac2312951976bee2a0d2587f98f39f
+- [[[github_riscv-llvm_patch_32,132]]] https://github.com/lowRISC/riscv-llvm/blob/master/0032-RISCV-Reserve-an-emergency-spill-slot-for-the-regist.patch
+- [[[github_riscv-llvm_patch_26,133]]] https://github.com/lowRISC/riscv-llvm/blob/master/0026-RISCV-Support-for-varargs.patch
+- [[[github-fracture-wiki-how-dagisel-works,134]]] https://github.com/draperlaboratory/fracture/wiki/How-TableGen%27s-DAGISel-Backend-Works
+- [[[welcome_to_the_back_end-slides,135]]] http://llvm.org/devmtg/2017-10/slides/Braun-Welcome%20to%20the%20Back%20End.pdf
+- [[[life_of_an_instruction,136]]] https://eli.thegreenplace.net/2012/11/24/life-of-an-instruction-in-llvm/
+- [[[shinh-blog-010637,137]]] http://shinh.hatenablog.com/entry/2014/10/03/010637
+- [[[llvm_backend_intro,138]]] https://www.slideshare.net/AkiraMaruoka/llvm-backend
+- [[[amazon-llvm_cookbook-customer_review,139]]] https://www.amazon.co.jp/dp/178528598X#customer_review-R28L2NAL8T9M2H
+- [[[llvm_dev_ml-117139,140]]] https://lists.llvm.org/pipermail/llvm-dev/2017-September/117139.html
+- [[[github_riscv-llvm_patch_85,141]]] https://github.com/lowRISC/riscv-llvm/blob/master/0085-RISCV-Set-AllowRegisterRenaming-1.patch
+- [[[llvm_dev_ml-135337,142]]] https://lists.llvm.org/pipermail/llvm-dev/2019-September/135337.html
+- [[[wikipedia-weak_symbol,143]]] https://en.wikipedia.org/wiki/Weak_symbol
+- [[[wikipedia-remat,144]]] https://en.wikipedia.org/wiki/Rematerialization
+- [[[llvm_phabricator-d46182,145]]] https://reviews.llvm.org/D46182
+- [[[nakata-compiler,146]]] 『コンパイラの構成と最適化（第2版）』（中田育男、朝倉書店、2009）
+- [[[fpga_develop_diary-to_llvm9,147]]] http://msyksphinz.hatenablog.com/entry/2019/08/17/040000
+- [[[llvm_phabricator-d60488,148]]] https://reviews.llvm.org/D60488
+- [[[llvm_phabricator-rl364191,149]]] https://reviews.llvm.org/rL364191
+- [[[llvm_phabricator-d64121,150]]] https://reviews.llvm.org/D64121
+- [[[llvm-codingstandards,151]]] https://llvm.org/docs/CodingStandards.html
+- [[[llvm_dev_ml-134921,152]]] https://lists.llvm.org/pipermail/llvm-dev/2019-September/134921.html
+- [[[llvm_phabricator-d43256,153]]] https://reviews.llvm.org/D43256

@@ -10,6 +10,9 @@ script:
     - pwd
     - mkdir build
     - asciidoctor/bin/asciidoctor main.asciidoc -o build/index.html
+    - asciidoctor/bin/asciidoctor draft-cahpv3.asciidoc -o build/draft-cahpv3.html
+    - asciidoctor/bin/asciidoctor draft-rv16kv2.asciidoc -o build/draft-rv16kv2.html
+    - asciidoctor/bin/asciidoctor draft-rv32kv1.asciidoc -o build/draft-rv32kv1.html
 deploy:
     provider: pages:git
     token: $GITHUB_TOKEN

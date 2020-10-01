@@ -1,0 +1,1441 @@
+= [下書き] LLVMバックエンド開発文書 for RV32Kv1
+艮鮟鱇 <ushitora@anqou.net>
+
+== これはなに
+
+2019年にRV32Kv1という自作ISA用のLLVMバックエンドを作ったときの自分とメンバ用のメモ。
+メモなので当然読みにくい。これをブラッシュアップしてまともな文章にする予定だったが、
+その作業が遅れているので、一旦メモのまま公開する。内容について質問したい場合は
+Twitter https://twitter.com/ushitora_anqou[@ushitora_anqou]までリプライなどを貰えれば反応するかもしれない。
+
+ソースコードは未公開。
+
+ブラッシュアップはlink:https://github.com/ushitora-anqou/write-your-llvm-backend[GitHub]にて行っている。
+
+このLLVMバックエンドの開発は、もともと2019年度未踏事業において
+link:https://github.com/virtualsecureplatform/kvsp[Virtual Secure Platform]を開発するために行われた。
+
+== アセンブラ簡単使い方
+
+とりあえずビルドする。ビルドには
+
+* `cmake`
+* `ninja`
+* `clang`
+* `clang++`
+
+が必要。
+
+これらを入れた後 `cmake` を次のように走らせる。
+....
+$ cmake -G Ninja \
+    -DLLVM_ENABLE_PROJECTS=clang \
+    -DCMAKE_BUILD_TYPE="Debug" \
+    -DBUILD_SHARED_LIBS=True \
+    -DLLVM_USE_SPLIT_DWARF=True \
+    -DLLVM_OPTIMIZED_TABLEGEN=True \
+    -DLLVM_BUILD_TESTS=True \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLLVM_USE_LINKER=lld \
+    -DLLVM_TARGETS_TO_BUILD="X86" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="RISCV;RV32K" \
+    ../llvm
+$ cmake --build .
+....
+その後アセンブラを起動する。アセンブラは `build/bin/llvm-mc` である。
+....
+$ cat foo.s
+li x9, 3
+mv x11, x1
+sub x9, x10
+add x8, x1
+nop
+
+$ bin/llvm-mc -arch=rv32k -filetype=obj foo.s | od -tx1z -Ax -v
+000000 7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00  >.ELF............<
+000010 01 00 f5 00 01 00 00 00 00 00 00 00 00 00 00 00  >................<
+000020 68 00 00 00 00 00 00 00 34 00 00 00 00 00 28 00  >h.......4.....(.<
+000030 04 00 01 00 8d 44 86 85 89 8c 06 94 01 00 00 00  >.....D..........<
+000040 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000050 00 2e 74 65 78 74 00 2e 73 74 72 74 61 62 00 2e  >..text..strtab..<
+000060 73 79 6d 74 61 62 00 00 00 00 00 00 00 00 00 00  >symtab..........<
+000070 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000080 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000090 07 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00  >................<
+0000a0 50 00 00 00 17 00 00 00 00 00 00 00 00 00 00 00  >P...............<
+0000b0 01 00 00 00 00 00 00 00 01 00 00 00 01 00 00 00  >................<
+0000c0 06 00 00 00 00 00 00 00 34 00 00 00 0a 00 00 00  >........4.......<
+0000d0 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00  >................<
+0000e0 0f 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00  >................<
+0000f0 40 00 00 00 10 00 00 00 01 00 00 00 01 00 00 00  >@...............<
+000100 04 00 00 00 10 00 00 00                          >........<
+000108
+....
+0x34から0x3dにある `8d 44 86 85 89 8c 06 94 01 00` が出力である。
+
+このような出力の他に `-show-encoding` を用いる方法もある。
+....
+$ bin/llvm-mc -arch=rv32k -show-encoding foo.s
+	.text
+	li	x9, 3                   # encoding: [0x8d,0x44]
+	mv	x11, x1                 # encoding: [0x86,0x85]
+	sub	x9, x10                 # encoding: [0x89,0x8c]
+	add	x8, x1                  # encoding: [0x06,0x94]
+	nop	                        # encoding: [0x01,0x00]
+....
+
+== 概要
+
+これを読めば自作アーキテクチャ（RV32Kv1）の機械語を出力するLLVMバックエンドを作成することができる。
+
+この文書はAsciiDocを用いて記述されている。記述方法については<<asciidoctor_user-manual>>を参照のこと。
+
+== 参考にすべき資料
+
+* Writing an LLVM Backend<<llvm-writing_backend>>
+* 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』<<fox-llvm>>
+* RISC-V support for LLVM projects<<github_riscv-llvm>>
+LLVMにRISC-Vサポートを追加するパッチ群。バックエンドを開発するためのチュートリアルも兼ねているらしく `docs/` 及びそれと対応したpatchが参考になる。
+またこれについて、開発者が2018 LLVM Developers' Meetingで登壇したときの動画は<<youtube_llvm-backend-development-by-example>>より閲覧できる。
+スライドは<<speakerdeck-llvm_backend_development>>より閲覧できる。
+* TableGenのLLVMのドキュメント<<llvm-tablegen>>
+* The LLVM Target-Independent Code Generator<<llvm-code_generator>>
+* Create an LLVM Backend for the Cpu0 Architecture<<cpu0>>
+** これをもとにLLVMバックエンドを開発しているブログ<<fpga_develop_diary>>
+* ELVMバックエンド<<elvm-llvm_backend>>
+** 限られた命令でLLVM IRの機能を達成する例として貴重。
+*** でも意外とISAはリッチだったりする。
+** Hamajiさんのスライドも参考になる<<elvm-slide>>。
+* 2018年度東大CPU実験で開発されたLLVM Backend<<todai_llvm_backend>>
+** これについて書かれたAdCのエントリもある<<todai_llvm_backend-article>>。
+* LLVM Language Reference Manual<<llvm-langref>>
+** LLVM IRについての言語リファレンス。意外と実装すべき命令が少ないことが分かる。
+
+== RV32Kv1アーキテクチャ仕様
+
+RV32Kv1はRISC-V<<riscv>>のISA<<riscv_specifications>>であるRV32Cをベースとして設定する。
+RV32Cからそのまま借用する命令は下記のとおりである。
+
+* LWSP
+* SWSP
+* LW
+* SW
+* J
+* JAL
+* JR
+* JALR
+* BEQZ
+* BNEZ
+* LI
+* MV
+* ADD
+* SUB
+* NOP
+
+RV32Cに無く、新設する命令は下記のとおりである。
+
+* SLT
+** 次に示すReservedのうち上の方を使う。
+
+image::img/rv32c_reserved_insts.png[]
+
+エンディアンにはリトルエンディアンを採用する。
+
+レジスタは次の通り。
+
+* x1/ra : return address register / ABI link register
+* x2/sp : ABI stack pointer
+* x8-x15 : general purpose register
+
+分岐時のPC更新は `PC <- PC + d` とする（ `PC <- PC + 1 + d` **でない**）。
+
+関数呼び出し規約は次の通り。
+
+* x8-x15 : 引数0番目〜7番目
+* x8 : 戻り値
+* sp : callee-saved
+* x15 : frame register
+
+== マイルストーン
+
+* MachineCodeからMCLayerに変換するアセンブラ
+** RV32Kアセンブリを受け取ってELFバイナリを出力する。
+** ELFバイナリである必要は微塵もないが、既存のLLVMコードベースを利用するためにはこれが必要。
+*** 最終的には自作バイナリに出力するようにしたい。
+** 実際に食わせるためにはELFバイナリを適当にstripする変換器を必要するかもしれない。
+** というか同一ファイル内でシンボル解決を行うリンカもどきが必要になる。あと `main` もとい `_start` がバイナリの一番最初にないといけないなどありそう。
+** 自作C標準ライブラリも必要かも。
+
+== LLVMのソースコードを用意する
+
+LLVMのソースコードを取得する。今回の開発ではv8.0.0をベースとする。
+Git上でrv32kブランチを作り、その上で開発する。
+
+....
+$ git clone https://github.com/llvm/llvm-project.git
+$ cd llvm-project
+$ git checkout llvmorg-8.0.0
+$ git checkout -b rv32k
+....
+
+== LLVM・Clangをビルドする
+
+<<github_riscv-llvm_docs_01>>, <<llvm_getting-started>>, <<clang_gettings-started>>を参考にしてLLVMとClangをNinjaを用いてビルドする。
+以降の開発において参考にするため、x86とRISC VをLLVM・Clangの出力可能ターゲットとして指定する。
+
+なお、CPUがIntel Core i5 7200U、メモリが8GBのLet's note上でのビルドには1時間半程度要した。
+
+....
+$ mkdir build
+$ cd build
+$ cmake -G Ninja \
+    -DLLVM_ENABLE_PROJECTS=clang \
+    -DCMAKE_BUILD_TYPE="Debug" \
+    -DBUILD_SHARED_LIBS=True \
+    -DLLVM_USE_SPLIT_DWARF=True \
+    -DLLVM_OPTIMIZED_TABLEGEN=True \
+    -DLLVM_BUILD_TESTS=True \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLLVM_USE_LINKER=lld \
+    -DLLVM_TARGETS_TO_BUILD="X86" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="RISCV" \
+    ../llvm
+$ cmake --build . # OR ninja
+....
+
+== LLVM・Clangを使う
+
+RV32バックエンドを使う例をいくつか掲げる<<msyksphinz_try-riscv64-llvm-backend>>。
+
+....
+$ bin/clang -target riscv32-unknown-linux-gnu -S -o main.s main.c    # main.cをRV32のアセンブリにコンパイル
+$ bin/clang -target riscv32-unknown-linux-gnu -emit-llvm -o main.bc -c main.c   # main.cをRV32用のLLVM IRにコンパイル
+$ llvm-project/build/bin/llvm-dis main.bc -o -  # LLVM IRをテキスト形式に変換
+....
+
+== LLVMをテストする
+
+`llvm-lit` を使用してLLVMをテストできる。
+
+....
+$ bin/llvm-lit test -s  # 全てのテストを実行する
+$ bin/llvm-lit -s --filter 'RV32K' test # RV32Kを含むテストを実行する
+$ bin/llvm-lit -as --filter 'RV32K' test # テスト結果を詳細に表示する
+....
+
+== スケルトンバックエンドを追加する
+
+<<github_riscv-llvm_docs_02>>を参考に、中身のないスケルトンのバックエンドをLLVMに追加する。
+これによって `llc` などの出力などにRV32Kが追加される。
+
+=== RV32KをTripleに追加する
+
+参照先<<github_riscv-llvm_patch_0002>>のパッチのとおりに書き換える。
+基本的に `riscv32` という文字列を検索し、都度 `rv32k` の項目を追加していけばよい。
+ただし、RISC-Vには32bit（ `riscv32` ）と64bit（ `riscv64` ）の変種があるため変換テーブルを用意する必要があるが、
+RV32Kにはその必要はない。 `UnknownArch` を返せば良い。
+
+コードを改変した後 `$ bin/llvm-lit -s --filter "Triple" test` でテストを行う。
+
+=== RV32KのELF定義を追加する
+
+<<github_riscv-llvm_patch_03>>を参考にファイルを書き換える。
+途中 `llvm-objdump.cpp` の書き換え該当箇所が見当たらない。とりあえず放置（TODO）。
+
+出力するELF形式のテストは、出力すべきELFの細部が決まっていないため、
+とりあえず書かないでおく（TODO）footnote:[この変更は後で行ったため、後ろの記述に齟齬が発生する場合がある（TODO）。]。
+
+=== バックエンドを追加する
+
+<<github_riscv-llvm_patch_04>>を参考にファイルを修正・追加する。
+ただし `RV32KTargetMachine::RV32KTargetMachine()` の初期化子で使用している
+`getEffectiveCodeModel()` がそのままではコンパイルエラーを出すため修正するfootnote:[同ファイル内にある同名のstatic関数を関数呼び出しの候補に入れていないようだ。原因不明。v8.0.0にて採用されているRISC-Vのコードを参考に、別の場所で定義されている同名関数を利用するよう修正した。]。
+
+ファイル中のライセンス条項などは、将来的にはApache 2.0 Licenseを明記する予定だが、
+とりあえず削除しておくfootnote:[LLVMのARMバックエンドはApache 2.0 Licenseに例外条項を
+付与したライセンスになっていた。検討の余地あり。]。
+
+さて追加したバックエンドも含めてLLVMの再ビルドを行う。
+そのためには再び `cmake` を実行する必要がある：
+....
+$ cmake -G Ninja \
+    -DLLVM_ENABLE_PROJECTS=clang \
+    -DCMAKE_BUILD_TYPE="Debug" \
+    -DBUILD_SHARED_LIBS=True \
+    -DLLVM_USE_SPLIT_DWARF=True \
+    -DLLVM_OPTIMIZED_TABLEGEN=True \
+    -DLLVM_BUILD_TESTS=True \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLLVM_USE_LINKER=lld \
+    -DLLVM_TARGETS_TO_BUILD="X86" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="RISCV;RV32K" \
+    ../llvm
+$ cmake --build . # OR ninja
+....
+
+無事 `llc --version` にRV32Kが含まれるようになった：
+....
+$ bin/llc --version
+LLVM (http://llvm.org/):
+  LLVM version 8.0.0
+  DEBUG build with assertions.
+  Default target: x86_64-unknown-linux-gnu
+  Host CPU: skylake
+
+  Registered Targets:
+    riscv32 - 32-bit RISC-V
+    riscv64 - 64-bit RISC-V
+    rv32k   - RV32K
+    x86     - 32-bit X86: Pentium-Pro and above
+    x86-64  - 64-bit X86: EM64T and AMD64
+....
+
+== 簡易的なアセンブラを実装する
+
+スケルトンバックエンドに実装を追加して、簡易アセンブラを構築する。
+わざわざ「簡易」と銘打っているのは、命令を
+`LI`, `MV`, `ADD`, `SUB`, `NOP` のみに限るためであるfootnote:[この方針はアセンブラを書き始めてから決めたため、以下の記述に不整合が生じている場合がある。いずれ修正する（TODO）。]。
+残りの命令については後の章で実装する予定であるfootnote:[蓋し `RV32KInstrInfo.td` を書くのは見た目によらず難しい。ある程度進んでから戻ってくるほうが良いだろう。]。
+
+=== TableGenファイルを追加する
+
+LLVMのDSLであるTableGenを使用し、RV32Kのレジスタや命令について記述する。
+追加すべきTableGenファイルは次の通り：
+
+* `RV32KRegisterInfo.td`: レジスタ
+* `RV32KInstrFormats.td`: 命令形式
+* `RV32KInstrInfo.td`: 命令
+* `RV32K.td`: 全体
+
+`RISCV` ディレクトリ以下に `RISCVInstrFormatsC.td` や `RISCVInstrInfoC.td` などがあるので参考にする。
+`LWSP` はエンコードされると `SP` の情報を持たないが、表記上は `lwsp rd, 100(sp)` と書くため `SP` をとる必要がある。
+これのために `RegisterClass` として `SP` を定義している。ただし `SP` には `X2` のみが所属する。
+また、単純に全てのレジスタを `GPR` として1つの括りにしてしまうと、
+`sub` 命令のオペランドとして `x2` などが許容されてしまう。
+これを防ぐため、 `x8` から `x15` を束ねて `GPRC` という名の `RegisterClass` を作成し、これを `sub` 命令のオペランドの型として指定する。
+
+即値を単純にとる命令はそのまま記述すればよいが、デコードした値を左シフトするような命令は注意が必要である。
+すなわち即値の `[7:2]` のみを生成コード中に持つような場合は `Instruction` 中に8bitの即値を宣言し、
+その `[7:2]` 部分が `Inst` と対応するという形をとる。
+なお、この点について `RISCVInstrFormatsC.td` に書いてある `RVInst16CJ` の実装が間違っている気がする。
+`offset` は12bitではなかろうか（TODO <<RVInst16CJ-offset>>）。また `Bcz` も同様の問題があるように見える（TODO）。
+
+文字列リテラル中の変数展開をTableGenはサポートしている。すなわち `"$rd, ${imm}(${rs})"` と書けばレジスタ `rd` や `rs`、 即値 `imm` の中身が展開される。
+なおここで変数名を `{}` で囲む**必要がある**。というのもTableGenでは `(` や `)`
+もオペランドの名前として認識されてしまうからだ。
+実際 `$rd, $imm(${rs})` と書くと次のようなエラーになる。
+....
+error: unable to find operand: 'imm('
+....
+なおここでの表記はパーズの際に行うパターンマッチのパターンとしての役割と、
+アセンブリとして出力を行う際のパターンとしての役割があるようだ（TODO: ほんまか？）。
+
+//`ins` や `outs` で使用するレジスタ・即値の名前は `RV32KInstrFormats.td` でフィールドとして定義した名前と一致する必要があるようだ。//TODO: ほんまか？
+2アドレス方式などで、読み込むレジスタと書き込むレジスタが一致する場合 `let Constraints = "$rd = $rd_wb";` などと書けばよい。
+
+必要なTableGenファイルを追加した後、これらのTableGenファイルが正しいかどうか `llvm-tblgen` を用いて確認する：
+....
+$ bin/llvm-tblgen -I ../llvm/lib/Target/RV32K/ -I ../llvm/include/ -I ../llvm/lib/Target/ ../llvm/lib/Target/RV32K/RV32K.td
+....
+初めて実行すると、おそらくたくさんエラーがでるので頑張って全て修正する。
+変換が成功した場合、生成されたコードが、自分が得たいものになっているかどうかを確認する。
+
+=== RV32K用の `MCTargetDesc` を追加する
+
+RV32KのELF形式オブジェクトファイルを出力できるようにする。そのために `LLVMInitializeRV32KTargetMC()` を実装する。
+`MCTargetDesc` サブディレクトリを作成し、その中に `RV32KMCTargetDesc.{cpp,h}` を作成する。
+他のファイルに依存する部分はコメントアウトして、適当な `CMakeLists.txt` や `LLVMBuild.txt` を作成・編集すると、
+ビルドが通るようになる。そこで次に実装すべき場所を次のように特定する：
+....
+$ bin/llvm-mc -arch=rv32k -filetype=obj foo.s
+llvm-mc: /home/anqou/workspace/llvm-project/llvm/tools/llvm-mc/llvm-mc.cpp:355: int main(int, char **): Assertion `MAI && "Unable to create target asm info!"' failed.
+Stack dump:
+0.	Program arguments: bin/llvm-mc -arch=rv32k -filetype=obj foo.s
+ #0 0x00007ff0c8f93e26 llvm::sys::PrintStackTrace(llvm::raw_ostream&) /home/anqou/workspace/llvm-project/llvm/lib/Support/Unix/Signals.inc:495:11
+ #1 0x00007ff0c8f94029 PrintStackTraceSignalHandler(void*) /home/anqou/workspace/llvm-project/llvm/lib/Support/Unix/Signals.inc:559:1
+ #2 0x00007ff0c8f91eb3 llvm::sys::RunSignalHandlers() /home/anqou/workspace/llvm-project/llvm/lib/Support/Signals.cpp:68:5
+ #3 0x00007ff0c8f947c4 SignalHandler(int) /home/anqou/workspace/llvm-project/llvm/lib/Support/Unix/Signals.inc:0:3
+ #4 0x00007ff0c8af73c0 __restore_rt (/usr/lib/libpthread.so.0+0x123c0)
+ #5 0x00007ff0c8628d7f __GI_raise (/usr/lib/libc.so.6+0x37d7f)
+ #6 0x00007ff0c8613672 __GI_abort (/usr/lib/libc.so.6+0x22672)
+ #7 0x00007ff0c8613548 _nl_load_domain.cold.0 (/usr/lib/libc.so.6+0x22548)
+ #8 0x00007ff0c8621396 (/usr/lib/libc.so.6+0x30396)
+ #9 0x00005588f8384783 main /home/anqou/workspace/llvm-project/llvm/tools/llvm-mc/llvm-mc.cpp:357:3
+#10 0x00007ff0c8615223 __libc_start_main (/usr/lib/libc.so.6+0x24223)
+#11 0x00005588f838402e _start (bin/llvm-mc+0x2402e)
+zsh: abort (core dumped)  bin/llvm-mc -arch=rv32k -filetype=obj foo.s
+....
+この場合 `AsmInfo` が次に実装すべき場所だと分かる。
+
+具体的な編集方法はパッチ<<github_riscv-llvm_patch_06>>を参考にする。
+
+`RV32KAsmBackend.cpp` の作成時に多くのコンパイルエラーが出た。どうやらこのあたりの仕様変更があったようだ。
+具体的には下記のとおりである。
+
+* `applyFixup` の引数変更。
+* `mayNeedRelaxation` の引数変更。
+* `writeNopData` の引数変更。
+* `MCAsmBackend::MCAsmBackend` の引数変更。
+* `createObjectWriter` の `createObjectTargetWriter` への名称・引数・戻り値変更。それに伴う `createRV32KELFObjectWriter` の引数・戻り値変更。
+
+以上を実装して動かすとSEGVで落ちる。デバッガで追いかけると、どうやら `MCSubtargetInfo` の生成関数である `createRV32KMCSubtargetInfo`
+を実装しなければならないようだ。RISC Vの最新のソースコードを参考に実装する。
+基本的にはTableGenが生成する `createRV32KMCSubtargetInfoImpl` をそのまま使えば良いが、これを使用するためには
+`CMakeLists.txt` に `tablegen(LLVM RISCVGenSubtargetInfo.inc -gen-subtarget)` を追加する必要があるため注意が必要だ。
+ちなみにRISC Vのパッチ群では、これらは<<github_riscv-llvm_patch_10>>で実装されている。なぜここで実装しなければならなくなったかは、よくわからない。
+
+諸々実装すると、次のように出力される：
+....
+$ bin/llvm-mc -arch=rv32k -filetype=obj foo.s
+bin/llvm-mc: error: this target does not support assembly parsing.
+....
+
+なお `createRV32KMCCodeEmitter` を実装しなくてもこの表示が出るが、それでいいのかはよくわからない。
+とりあえずパッチ<<github_riscv-llvm_patch_06>>にある分は全て実装する。
+
+`createRV32KMCCodeEmitter` を実装する過程で、TableGenがどのように `InstrFormats` でのフィルード名と
+`InstrInfo` での `ins` と `outs` の名前を対応付けるのか調べた。例えば次のように `BEQZ` 命令をTableGenにて宣言したとする。
+....
+class RVInstCB<bits<3> funct3, bits<2> op, dag outs, dag ins, string opcodestr, string argstr>
+: RVInst<outs, ins, opcodestr, argstr, []> {
+  bits<9> offset;
+  bits<3> rs1;
+
+  let Inst{15-13} = funct3;
+  let Inst{12} = offset{8};
+  let Inst{11-10} = offset{4-3};
+  let Inst{9-7} = rs1;
+  let Inst{6-5} = offset{7-6};
+  let Inst{4-3} = offset{2-1};
+  let Inst{2} = offset{5};
+
+  let Opcode = op;
+}
+....
+....
+def BEQZ : RVInstCB<0b110, 0b01, (outs), (ins GPR:$rs1, simm9_lsb0:$imm),
+                    "beqz", "$rs1, $imm">;
+....
+このときこのTableGenソースコードは期待通りに**動かない**（多分：TODO）。
+なぜなら `class RVInstCB` で指定した `offset` と `rs1` が、 `def` で指定した `$rs1` と `$imm` に対応しないからである。
+TableGenの実装footnote:[`utils/TableGen/CodeEmitterGen.cpp` などを参照。]や
+ドキュメント<<llvm-writing_backend-operand_mapping>>によると、これらを対応させる方法には2種類ある：
+
+. 両者で同じ名前を採用する。
+. 両者で宣言順序を揃えるfootnote:[関係するすべての `class` での宣言が対象になるようだが、それらがどの順に対応するのかは判然としない。]。
+
+上の例では `RVInstCB` では `offset` が先に宣言されているにも関わらず、 `BEQZ` では `$rs1` を先に使用した。
+この結果 `$rs1` には `offset` と `rs1` の両方が結びつくことになるfootnote:[名前での対応により `rs1` が結びつき、順序による対応で `offset` が結びつく。]。
+なおこのような重複が発生してもTableGenは特に警告等を表示しないようだ。よくわからない
+footnote:[アセンブルではエラーが出ないが、ディスアセンブルで「オペランドが無い」というエラーが（添字チェックに引っかかるという形で）出る場合がある。]。
+
+`RV32KMCCodeEmitter::encodeInstruction` 内で使用している `support::endian::Writer<support::little>(OS).write(Bits);` はそのままでは通らない。
+RISC Vを参考に `support::endian::write<uint16_t>(OS, Bits, support::little);` としておく。
+
+=== `RV32KAsmParser` を追加する
+
+アセンブリをパーズするための `RV32KAsmParser` を追加する。これによってアセンブリをオブジェクトファイルに直すことができるようになる。
+新しく `AsmParser` ディレクトリを作成し、その中に `RV32KAsmParser.cpp` 及びそれに付随するファイルを作成する。
+例によって、パッチ<<github_riscv-llvm_patch_07>>を参考に実装をすすめる。
+
+`RV32KAsmParser.cpp` に記述するコード量がそれなりにあるため少々面食らうが、
+要するに `RV32KAsmParser` と `RV32KOperand` の2つのクラスを作成し、実装を行っている。
+パーズの本体は `RV32KAsmParser::ParseInstruction` である。これを起点に考えれば、それほど複雑な操作はしていない。
+
+即値に関して `SImm6` を `SImm12` に直す必要がある。これらはTableGenが生成するコードから呼ばれるようだ。
+
+ところでRV32Kの命令には `add` などレジスタを5bitで指定する命令と、
+`sub` などレジスタを3bitで指定する命令の2種類がある。エンコードに際して、これらの区別のための特別な処理は必要ない。
+というのも、3bitでレジスタを指定する場合その添字の下位3bit以外が無視されるため、
+結果的に正しいコードが出力されるfootnote:[LLVMのRISC V実装でもこの方式が採用されている。]。
+例えば `x8` を指定すると、これに `1000` という添字が振られ、4bit目を無視することで `000` となるため、
+3bitでのレジスタ指定方法として正しいものになる。
+
+そうこうしていると簡易的なアセンブラが完成する：
+....
+$ cat foo.s
+li x9, 3
+mv x11, x1
+sub x9, x10
+add x8, x1
+nop
+
+$ bin/llvm-mc -arch=rv32k -filetype=obj foo.s | od -tx1z -Ax -v
+000000 7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00  >.ELF............<
+000010 01 00 f5 00 01 00 00 00 00 00 00 00 00 00 00 00  >................<
+000020 68 00 00 00 00 00 00 00 34 00 00 00 00 00 28 00  >h.......4.....(.<
+000030 04 00 01 00 8d 44 86 85 89 8c 06 94 01 00 00 00  >.....D..........<
+000040 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000050 00 2e 74 65 78 74 00 2e 73 74 72 74 61 62 00 2e  >..text..strtab..<
+000060 73 79 6d 74 61 62 00 00 00 00 00 00 00 00 00 00  >symtab..........<
+000070 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000080 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+000090 07 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00  >................<
+0000a0 50 00 00 00 17 00 00 00 00 00 00 00 00 00 00 00  >P...............<
+0000b0 01 00 00 00 00 00 00 00 01 00 00 00 01 00 00 00  >................<
+0000c0 06 00 00 00 00 00 00 00 34 00 00 00 0a 00 00 00  >........4.......<
+0000d0 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00  >................<
+0000e0 0f 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00  >................<
+0000f0 40 00 00 00 10 00 00 00 01 00 00 00 01 00 00 00  >@...............<
+000100 04 00 00 00 10 00 00 00                          >........<
+000108
+....
+0x34から0x3dにある `8d 44 86 85 89 8c 06 94 01 00` が出力であり、
+正しく生成されていることが分かるfootnote:[白状すると、確認していない。次のステップでテストを書くため、そこで確認する。]。
+We made it!
+
+// ///// 以下は使用レジスタがx3-x10だと思っていたときの記述。ついでにコードも末尾に付けた。
+//そのため、3bitに収まらないレジスタを指定することはできないfootnote:[無理に指定すると4bit目が無視される。]。
+//これを仕様に従って訂正するfootnote:[なおRV32Cの場合、Integer Register Numberとして `x8` から `x15` が指定されている。これらは下位3bitをとればRVC Register Numberとして合法であるため、訂正の必要がない。]。
+//すなわち3bitでレジスタを指定する命令（現状では `SUB` のみ）では `x3` を0として順に添え字をふる。
+//
+//これを行うためには、アセンブリをコードに変換する際に、そのレジスタ番号を補正すればよい。
+//このようなレジスタオペランドエンコードのフックを行う関数を指定する場所として `RegisterOperand` の `EncoderMethod` がある。
+//そこで `X3` から `X10` を `GPRC` という `RegisterClass` とした上で、これを `RegisterOperand` で包み `ShiftedGPRC` とするfootnote:[なお、これを使用した具体例を見つけられていないため、この使い方が正しいかどうかはよくわからない（TODO）。]。
+//これの `EncoderMethod` として `RV32KEncodeShiftedGPRCRegisterOperand` という関数を指定する。
+//これは `RV32KMCCodeEmitter` クラスのメンバ関数として定義する。これによって任意の処理をフックすることができる。
+//ちなみにこれは最近入った新しい機能である。https://reviews.llvm.org/rL303044
+//
+//ビルドすると、次のような出力結果が得られる：
+//....
+//$ cat foo.s
+//li x3, 3
+//mv x3, x4
+//sub x9, x10
+//add x3, x4
+//nop
+//
+//$ bin/llvm-mc -arch=rv32k -filetype=obj foo.s | od -tx1z -Ax -v
+//000000 7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00  >.ELF............<
+//000010 01 00 f5 00 01 00 00 00 00 00 00 00 00 00 00 00  >................<
+//000020 68 00 00 00 00 00 00 00 34 00 00 00 00 00 28 00  >h.......4.....(.<
+//000030 04 00 01 00 8d 41 92 81 1d 8f 92 91 01 00 00 00  >.....A..........<
+//000040 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+//000050 00 2e 74 65 78 74 00 2e 73 74 72 74 61 62 00 2e  >..text..strtab..<
+//000060 73 79 6d 74 61 62 00 00 00 00 00 00 00 00 00 00  >symtab..........<
+//000070 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+//000080 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
+//000090 07 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00  >................<
+//0000a0 50 00 00 00 17 00 00 00 00 00 00 00 00 00 00 00  >P...............<
+//0000b0 01 00 00 00 00 00 00 00 01 00 00 00 01 00 00 00  >................<
+//0000c0 06 00 00 00 00 00 00 00 34 00 00 00 0a 00 00 00  >........4.......<
+//0000d0 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00  >................<
+//0000e0 0f 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00  >................<
+//0000f0 40 00 00 00 10 00 00 00 01 00 00 00 01 00 00 00  >@...............<
+//000100 04 00 00 00 10 00 00 00                          >........<
+//000108
+//....
+//0x34から0x3cまでの `8d 41 92 81 1d 8f 92 91 01` が具体的なコードである。
+// //////
+//
+//
+//def GPRC : RegisterClass<"RV32K", [i32], 32, (add
+//            X3, X4, X5, X6, X7, X8, X9, X10
+//    )>;
+//
+//def ShiftedGPRC : RegisterOperand<GPRC> {
+//  let EncoderMethod = "RV32KEncodeShiftedGPRCRegisterOperand";
+//  //let DecoderMethod = "RV32KDecodeShiftedGPRCRegisterOperand";
+//}
+//
+//
+//
+//uint64_t
+//RV32KEncodeShiftedGPRCRegisterOperand(const MCInst &MI, unsigned no,
+//                                      SmallVectorImpl<MCFixup> &Fixups,
+//                                      const MCSubtargetInfo &STI) const;
+//
+//uint64_t RV32KMCCodeEmitter::RV32KEncodeShiftedGPRCRegisterOperand(
+//    const MCInst &MI, unsigned no, SmallVectorImpl<MCFixup> &Fixups,
+//    const MCSubtargetInfo &STI) const {
+//  const MCOperand &MO = MI.getOperand(no);
+//  if (MO.isReg()) {
+//    uint64_t op = Ctx.getRegisterInfo()->getEncodingValue(MO.getReg());
+//    assert(3 <= op && op <= 10 && "op should belong to GPRC.");
+//    return op - 3;
+//  }
+//
+//  llvm_unreachable("Unhandled expression!");
+//  return 0;
+//}
+
+== 簡易アセンブラのテストを書く
+
+適当な入力に対してアセンブラが正しい出力を行うかを確認しつつ
+新たなバグの発生を抑止するために、LLVMのフレームワークを用いてテストを書く。
+
+=== `RV32KInstPrinter` を実装する
+
+テストを書くために、まずRV32Kのためのinstruction printerを作成する。
+これは内部表現である `MCInst` から文字列表現であるアセンブリに変換するための機構である。
+この後で作成するテストでは、アセンブリを `MCInst` に変換した上で、
+それをアセンブリに逆変換したものがもとのアセンブリと同じであるか否かでテストを行う。
+
+まず例によって `InstPrinter` ディレクトリを作成した後、適切に `CMakeLists.txt` や
+`LLVMBuild.txt` を作成・編集する。
+また `RV32KInstPrinter` を作成するための関数を `LLVMInitializeRV32KTargetMC`
+にて登録する必要がある。
+
+その後 `InstPrinter/RV32KInstPrinter.{cpp,h}` を作成する。
+いつものようにこれはパッチ<<github_riscv-llvm_patch_08>>を参考にして行う。
+
+`RV32KInstPrinter::printRegName` の実装で用いる `getRegisterName` の第二引数に
+何も渡さなければAltNameを出力に使用する。第二引数に `RV32K::NoRegAltName` を渡すことで、
+レジスタを `X0`, `X1`, ... と表示することができる。
+
+上記をビルドした後、
+実際にアセンブリを `MCInst` に変換し、さらにそれをアセンブリに戻すには、
+`llvm-mc` を用いる：
+....
+$ bin/llvm-mc -arch=rv32k -show-encoding foo.s
+	.text
+	li	x9, 3                   # encoding: [0x8d,0x44]
+	mv	x11, x1                 # encoding: [0x86,0x85]
+	sub	x9, x10                 # encoding: [0x89,0x8c]
+	add	x8, x1                  # encoding: [0x06,0x94]
+	nop	                        # encoding: [0x01,0x00]
+....
+`-show-encoding` を指定することよって当該アセンブリがどのような機械語に
+翻訳されるか確認することができる。テストではこの機械語の正誤も確認する。
+
+=== テストを書く
+
+簡易アセンブラが正しく動作していることを保証するためにテストを書く。
+ここでは「適当な入力を与えたときに正しく解釈し正しい機械語を生成するか」を確認する。
+
+前節と同様にパッチ<<github_riscv-llvm_patch_08>>を参考に記述する。
+まず `test/MC/RISCV` ディレクトリを作成する。
+その中に `rv32k-valid.s` と `rv32k-invalid.s` を作成し、
+前者で正しいアセンブリが適切に処理されるか、
+後者で誤ったアセンブリに正しくエラーを出力するかを確認する。
+
+記述後 `llvm-lit` を用いてテストを行う：
+....
+$ bin/llvm-lit -as --filter 'RV32K' test
+PASS: LLVM :: MC/RV32K/rv32k-valid.s (1 of 2)
+Script:
+--
+: 'RUN: at line 1';   /home/anqou/workspace/llvm-project/build/bin/llvm-mc /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-valid.s -triple=rv32k -show-encoding      | /home/anqou/workspace/llvm-project/build/bin/FileCheck -check-prefixes=CHECK,CHECK-INST /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-valid.s
+--
+Exit Code: 0
+
+
+********************
+PASS: LLVM :: MC/RV32K/rv32k-invalid.s (2 of 2)
+Script:
+--
+: 'RUN: at line 1';   not /home/anqou/workspace/llvm-project/build/bin/llvm-mc -triple rv32k < /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-invalid.s 2>&1 | /home/anqou/workspace/llvm-project/build/bin/FileCheck /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-invalid.s
+--
+Exit Code: 0
+
+
+********************
+Testing Time: 0.11s
+  Expected Passes    : 2
+....
+テストに通っていることが分かる。YATTA!
+
+== アセンブラに残りの命令を追加する
+
+簡易アセンブラに残りの命令を実装する。「簡易」を取り払うということである。
+参考にするRISC Vのパッチは<<github_riscv-llvm_patch_09>>である。
+
+=== `lw` 命令を追加する
+
+`lw` 命令は7bit符号なし即値をとる。この即値の下位2ビットは0であることが要求される。
+この即値はアセンブリ中でもLLVM内部でも7bitのまま保持される。
+
+`ParserMatchClass` は `AsmParser` がどのようにそのオペランドを読めばよいか指定する。
+TableGenで直接指定できない性質は `EncoderMethod` などを用いてフックし、C\++側から指定する<<llvm_dev_ml-tablegen_definition_question>>。
+
+`uimm8_lsb00` の `let EncoderMethod = "getImmOpValue";` は一見不思議に見えるが正常で、
+ここでえられた即値は `lw` の `imm` になり、そちらで整形される。
+[[RVInst16CJ-offset]]だが `simm12_lsb0` は `getImmOpValueAsr` が指定されるので `offset` は12bitではなく11bitになっている。
+
+`uimm8_lsb00` をつくると `RV32KOperand::isUImm7Lsb00` が無いと言われるので追加する必要がある。
+この `UImm7Lsb00` という名前は `ImmAsmOperand` の `Name` に従って作られているようだ。
+
+`generateImmOutOfRangeError` の実装に使われているおもしろデータ構造 `Twine` は
+文字列の連結を二分木で持つことで高速に行うことができるらしい<<llvm_doxygen-twine>>。
+
+メモリ表記のアセンブリをパーズするためには `RV32KAsmParser` を変更する必要がある。
+この処理のエントリポイントは `parseOperand` で、ここから `parseMemOpBaseReg` を呼び出す。
+
+`li x11, x12, x13` というアセンブリを流し込むと `invalid operand for instruction` を期待
+しているにもかかわらず `immediate must be an integer in the range [-32, 31]` と出てしまう。
+`LW` を追加する前はそのメッセージが出ていたのでいろいろ調査したが原因不明。
+`git stash` してもとのコードをテストしてみると、実際には
+....
+$ bin/llvm-mc -arch=rv32k -show-encoding test.s
+    .text
+test.s:1:14: error: invalid operand for instruction
+li x11, x12, x13
+             ^
+....
+となっている。すなわちエラーが発生している位置がずれている。もとからおかしかったのだ。
+おそらくこれは将来的に解決されるだろうという判断のもと保留（TODO）。
+
+テストを忘れずに追加してコミット。
+
+ところで `getImmOpValue` はオペランドにある即値をそのまま返す関数であり、
+即値の `EncoderMethod` にフックとして使用する。
+しかしこれは `simm6` の実装時には不要であり、
+実際 `let EncoderMethod = "getImmOpValue";` をコメントアウトしてもテストには通る。
+<<github_riscv-llvm_patch_09>>では `getImmOpValueAsr1` のみが実装されている。
+RISC Vの最終的なコードで `getImmOpValue` は、即値として使えるような複雑な命令を解釈している。
+
+=== `sw` 命令を追加
+
+`lw` 命令を追加する際に諸々を整えたので、やるだけ。
+
+=== `lwsp` 命令を追加
+
+tdファイルに `lwsp` を追加してビルドしようとすると次のようなエラーが出た。
+....
+error: Invalid bit range for value
+  let Inst{3-2} = imm{7-6};
+                     ^
+....
+どうやら `imm` が6bit即値として扱われているようだ。原因を探すと `RVInstCI` 内で `imm` を
+6bitと定義していたことが原因だったようだ。RISC V側での実装に合わせ、これを10bitに変更する。
+同様に `RVInstCI` である `li` の定義も変更し、即値については各々の `def` で適切に処理するようにした。
+
+`sp` を用いたテストを書くと、出力時にこれが `x2` に変換されてしまうためにエラーになってしまう。
+`RegisterInfo.td` の `RegAltNameIndices` の定義を変更しAltNameで出力をまかなえるようにした上で、
+`RV32KInstPrinter::printRegName` の実装を改変した。
+
+=== `swsp` 命令を追加
+
+tdファイルに `swsp` を追加するだけ。
+
+=== `j` 命令を追加
+
+RISC Vの仕様上 `c.j` 命令は12bitの即値フィールドを持つ。
+しかしLLVMのRISC Vバックエンド実装では `RVInst16CJ` は11bitの即値を持つ。
+これは末尾1bitが必ず0であるために（ `lsb0` ）この1bitを捨てることができるためである。
+しかしこの実装は `lw` などがとる即値をそのままのビット数でデータを持つことと一貫性がないように
+見受けられる。そこでRV32K実装では `j` 命令などもすべてそのままのビット数でデータを持つことにする。
+したがって `simm12_lsb0` などに指定する `EncoderMethod` は `getImmOpValueAsr1` ではなく
+`simm6_lsb00` と同様の `getImmOpValue` となる。
+
+=== `jal` ・ `jr` ・ `jalr` ・ `beqz` ・ `benz` 命令を追加
+
+やるだけ。
+
+=== 属性footnote:[これを属性と呼んでいいかどうかよくわからないが、わかりやすいし呼びやすいのでとりあえずこれで。内部的にはrecordと書かれることが多いようだ。]を指定する
+
+`isBranch` やら `isTerminator` やら `hasSideEffects` やらを命令毎にちゃんと設定する。
+これはアセンブラでは意味をなさないが、コンパイラ部分を作り始めると重要になるのだろう。多分（TODO: ほんまか？）。
+
+ところでどのような属性フィールドがあるのかはリファレンスを読んでも判然としない。
+TableGenのソースコードを読みに行くと `llvm/utils/TableGen/CodeGenInstruction.h` にて
+属性のための大量のフラグが定義されているが、各々がどのような目的で使用されるかは書いていない。
+`llvm/include/llvm/CodeGen.h` に `mayLoad` や `isTerminator` ・ `isBarrier` などの一部分のフラグについて説明がある一方、
+`hasSideEffects` などのフラグについては説明がない。
+
+`hasSideEffects` は `llvm/lib/Target/RISCV/RISCVInstrInfoC.td` の中で `C_UNIMP` と `C_EBREAK` でのみ `1` に設定されている。
+特殊な事象が起こらない限り `0` にしておいて良さそうだ。
+
+`class` や `def` の中に `let field = value;` と書くのと、外に `let field = value in ...` ないし `let field = value in { ... }`
+と書くのは同じ効果を持つが、外に書くと複数の `class` ・ `def` にまとめて効果を持つという点においてのみ異なる<<llvm-tablegen-langref>>。
+
+`class` の段階で `hasSideEffects` などについて列挙するのは、あまりよいスタイルと思えない。
+というのもRV32CなどのISAでは、エンコーディングフォーマットが同じでも全く違う意味をもつ命令を
+意味することが往々にしてあるからだ。また我々の開発のように後々ISAを変更することが半ば確定している状況において、
+`class` と複数の `def` におけるフラグの整合を保ちつつ変更するのは骨が折れる。
+それなら `class` はビットパターンのみを扱うものとし、
+`def` にその意味的な部分（フラグの上げ下げ）を書くほうが、後々の拡張性を考えるとよいと思うfootnote:[ただしこれは命令数が少ない場合に限るのかもしれない。]。
+
+=== レジスタ指定の `GPR` と `GPRC` を使い分ける
+
+`RV32KRegisterInfo.td` において `GPRC` は `X8` から `X15` までの汎用レジスタを指し、
+`GPR` は `X1` と `X2` を含むすべてのレジスタを指すように定義されている。
+RV32Kの命令のうち3bit幅でレジスタ番号を指定する命令には `GPRC` を用い、
+5bit幅でレジスタ番号を指定する命令には `GPR` を用いるようにすることで、
+LLVMに適切なレジスタを教えることができる。
+
+この別はディスアセンブラを開発する段になって重要になる。というのも、バイナリ中にレジスタ番号として `1` と出てきた場合、
+このオペランドが `GPR` か `GPRC` かによって指すレジスタが `x1` または `x9` と異なるからである。
+
+== ディスアセンブラを実装する
+
+アセンブラが一通り実装できたので、今度はディスアセンブラを実装する。
+これによって `llvm-objdump -d` を使用することができるようになる。
+このディスアセンブラのテストには、すでに記述した `rv32k-valid.s` などのテストを使用できる。
+すなわちアセンブラによってアセンブリを機械語に直し、さらにディスアセンブラによって機械語をアセンブリに直した結果が、
+元のアセンブリと一致するかどうかをみればよいfootnote:[<<github_riscv-llvm_docs_05>>にはfull round trip testingと表現されている。]。
+
+参考にするRISC Vのパッチは<<github_riscv-llvm_patch_10>>である。
+
+=== `RV32KDisassembler` を追加する
+
+`*_lsb0` や `*_lsb00` の取り回しがよくわからなくなったので整理footnote:[整理というより半分推測だが。]する。
+TableGenで指定するビットによって、即値のどの部分をどのように命令コード中に配置するかを決定することができる。
+これによって `RV32KCodeEmitter::getImmOpValueAsr1` などの `EncoderMethod` に頼る必要がなくなる。
+同様にディスアセンブラについても `RV32KDisassembler::decodeSImmOperandAndLsl1` などの `DecoderMethod` に
+頼る必要がなくなる。言い換えれば、これらのフック関数が受け取る即値は、TableGenで指定したビット単位の
+エンコード・デコードをすでに受けた値になるfootnote:[バイナリに直接触れるのはTableGenが出力するコードなので、当然といえば当然だが。]。
+`RV32KAsmParser::isUImm12` などが呼び出す `getConstantImm` が返す即値も同様である。
+
+ナイーブに実装すると `lwsp` や `swsp` が入ったバイナリをディスアセンブルしようとしたときに
+エラーがでる。これは例えば次のようにして確認することができる。
+....
+$ cat test.s
+lwsp x11, 0(sp)
+
+$ bin/llvm-mc -filetype=obj -triple=rv32k < test.s | bin/llvm-objdump -d -
+....
+原因は `lwsp` や `swsp` がアセンブリ上はspというオペランドをとるにも関わらず、
+バイナリにはその情報が埋め込まれないためである。このためディスアセンブル時に
+オペランドが一つ足りない状態になり、配列の添字チェックに引っかかってしまう。
+
+これを修正するためには `lwsp` や `swsp` に含まれる即値のDecoderが呼ばれたときをフックし、
+`sp` のオペランドが必要ならばこれを補えばよいfootnote:[この実装手法はRISC Vのそれによる。かなりad-hocだと感じるが、他の方法が分からないのでとりあえず真似る。]。
+この関数を `addImplySP` という名前で実装する。ここで即値をオペランドに追加するために呼ぶ
+`Inst.addOperand` と `addImplySP` の呼び出しの順序に注意が必要である。
+すなわち `LWSP` を `RV32KInstrInfo.td` で定義したときのオペランドの順序で呼ばなければ
+`lwsp x11, sp(0)` のようなおかしなアセンブリが生成されてしまう。
+
+ちなみにエンコード方式にコンフリクトがある場合はビルド時に教えてくれる。
+....
+Decoding Conflict:
+		111...........01
+		111.............
+		................
+	BNEZ 111___________01
+	BNEZhoge 111___________01
+....
+
+これを防ぐためには、もちろん異なるエンコード方式を指定すればよいのだが、
+他にディスアセンブル時に命令を無効化する方法としてTableGenファイルで
+`isPseudo = 1` を指定して疑似命令にしたり
+`isCodeGen = 1` を指定してコード生成時にのみ効力を持つ
+命令にすることなどができる。
+
+== relocationとfixupに対応する
+
+ワンパスでは決められない値についてあとから補うための機構であるfixupと、
+コンパイル時には決定できない値に対してリンカにその処理を任せるためのrelocationについて
+対応する。参考にするパッチは<<github_riscv-llvm_patch_11>>。
+
+必要な作業は大きく分けて次の通り。
+* Fixupの種類とその内容を定義する。
+* Fixupを適用する関数を定義する。
+* アセンブラがFixupを生成するように改変する。
+* Fixupが解決されないまま最後まで残る場合は、これをrelocationに変換する。
+
+=== Fixupを定義する
+
+`RV32KFixupKinds.h` を新規に作成し `enum Fixups` を定義する。
+RV32Kv1では `beqz` ・ `bnez` がとる8bitの即値と `j` ・ `jal` がとる11bitの即値のために
+必要なFixupを定義する。
+なお `enum` の最初のフィールドには `FirstTargetFixupKind` を設定し、
+最後のフィールドは `NumTargetFixupKinds` として、定義した `enum` のフィールドの個数を設定する。
+
+Fixupの種類からその情報を返すのは `RV32KAsmBackend::getFixupKindInfo` が行う。
+ここでの `offset` の値は、Fixupのために得られた即値を何ビット左シフトするかを意味し、
+`bits` は TODO を意味している。そこで、即値のフィールドが命令中で2つに分かれている命令のためのFixup
+である `fixup_rv32k_branch` では `offset` と `bits` を各々 `0` と `16` にしておく
+footnote:[これはRISC Vの実装を真似ている。]。
+
+=== Fixupを適用する関数を定義する
+
+要するに `RV32KAsmBackend::applyFixup` の実装である。補助関数として `adjustFixupValue` も実装する
+footnote:[ところでRISC Vの `fixup_riscv_rvc_{jump,branch}` の実装では即値の幅のチェックを行っていない。
+なぜかはよくわからない。あと `fixup_riscv_jal` のコメントが間違っている気がする。]
+
+=== アセンブラにFixupを生成させる
+
+`AsmParser` と `CodeEmitter` を書き換え、必要なときにアセンブラにFixupを生成させるようにする。
+
+さてRISC Vでは `%hi` や `%lo` などが使えるために、これらを評価するための機構として `RISCVMCExpr` を導入している。
+具体的には `RISCVAsmParser::parseImmediate` でトークンに `AsmToken::Percent` が現れた場合に
+`RISCVAsmParser::parseOperandWithModifier` を呼び出し、この中でこれらをパーズして `RISCVMCExpr` を生成している。
+
+しかしRV32Kではこれらの `%` から始まる特殊な即値footnote:[内部的にはoperand with modifiersと呼ばれているようだ。]
+に対応せずfootnote:[とりあえずはね。]、あくまで分岐命令の即値におけるラベルのFixupのみが行えれば十分である。
+footnote:[なおRISC Vの `classifySymbolRef` を見るとシンボルの引き算ができるように見えるが、実際に試してみると `getImmOpValue` で
+`Unhandled expression` が出て落ちてしまった。よくわからない。即値としては認識される（ `isSImm12` などが `true` を返す）が、
+Fixupとして受領されない（ `getImmOpValue` でエラーになる）気がする。TODO]。
+
+そこでまず `isSImm9Lsb0` などにシンボルが来た場合には `true` を返すようにする。
+これはすなわち、即値を指定するべきところにラベル名が来た場合は `true` とするということである
+footnote:[ここで `isImm` を呼び出す必要があることに注意が必要である。「即値」と聞くと整数値のみを受け取ると誤解しがちだが、
+実際には `RV32KOperand` の `ImmOp` は `MCExpr` をその値として持っている。したがって、シンボルなどを含めた
+即値を求めるための演算そのものが対象になっている。すなわち `isImm` が `true` であることを確認することで、
+ラベル名が来るべきところにレジスタ名などが来ないことを担保しているのである。
+またより形式的には、これは `RV32KOperand` が持つ共用体の中身が `ImmOp` となっていることを保証している。]。
+その次に `getImmOpValue` を変更し、即値を書くべき場所にシンボルが来ている場合にはFixupを生成するようにする。
+このとき `fixup_rv32k_branch` と `fixup_rv32k_jump` のいずれを発行するかは、
+オペランドの種類で `switch-case` して判断している。
+これは良くないコーディングスタイルであり、実際<<github_riscv-llvm_docs_06>>ではこれを避けるために
+種々のInstFormatに手を加えるとはっきり書いてあるのだが、ここでは作業の単純さを重視して
+ハードコーディングすることにする。
+
+それから `RV32KAsmParser::parseImmediate` を変更し `AsmToken::Identifier` が来たときには
+`MCSymbolRefExpr` を生成するようにしておく。この変更は<<github_riscv-llvm_patch_09>>に含まれていたものだが、
+取り込み忘れていた。
+
+=== Fixupからrelocationへの変換部を実装する
+
+`RV32KELFObjectWriter::getRelocType` を実装すればよいのだが、実のところRV32Kにおけるrelocationはほとんど想定おらず、
+仕様も決まっていない。そこでここでは実装を省略する。
+
+=== Fixupのためのテストを書く
+
+`.space` を使って適当に間隔を開けながら命令を並べ、正しく動作しているかを確かめる。
+
+これでアセンブラ部分は終了。We made it!
+
+== コンパイラのスケルトンを作成する
+
+空の関数とALUオペレーションをサポートできるような最小のバックエンドを作成する。
+
+* `RV32KAsmPrinter` と `RV32KMCInstLower`
+** `MachineInstr` を `MCInst` に変換する。
+** `llvm::LowerRV32KMachineInstrToMCInst` で `MCInst` のオペコード・オペランドを設定する
+* `RV32KInstrInfo`
+** TableGenによる自動生成。命令を表す `enum` の定義。
+* `RV32KRegisterInfo`
+** ほとんどTableGenによる自動生成。
+** `getReservedRegs` で変数に割り付ける**べきでない**レジスタを指定する。
+** `getFrameRegister` はframe indicesに用いられるレジスタを指定する（？：TODO）
+* `RV32KISelDAGToDAG`
+** `SelectionDAG` ノードに対して適切なRV32K命令（多分 `MachineInstr` ）を見繕う。
+** `RV32KDAGToDAGISel::Select` がエントリポイント
+*** ただしこれはTableGenが生成した `SelectCode` 関数を呼んでいるだけ。
+* `RV32KISelLowering`
+** LLVM IRを `SelectionDAG` に変換する。
+** この処理はほとんどターゲット非依存である。
+*** フックを設定して挙動を変化させる。
+* `RV32KInstrInfo.td`
+** ここに「 `SelectionDAG` をどのようにRV32Kの命令セット（多分 `MachineInstr` ）に変換するか」が書かれる。
+** `def : Pat<(hoge), (piyo)>;` という表記で「 `hoge` に `SelectionDAG` がパターンマッチしたとき `piyo` に変換する」を意味する。
+*** ここで `piyo` に記入するのは `ins` のオペランドのみである。 `outs` は「戻り値」となる。（TODO；詳細は？）
+** どのような `SelectionDAG` にマッチできるかは `include/llvm/Target/TargetSelectionDAG.td` に情報がある。
+** マッチは命令（ `add` のような）のみならず「オペランドが即値であるか」などにも適用できる。ただしこの場合その即値の定義が `ImmLeaf` を継承していることが必要。
+* 関数呼び出し規約やCallee-savedなレジスタについてもここで指定する。
+* `update_llc_test_checks.py` を使用することで、LLVM IRで書かれた関数から生成されるアセンブリのテストを自動的に生成することができる。
+
+おおよそ次のような過程をたどるようだ<<llvm-code_generator-target_independent_code_gen_alg>>。
+
+....
+LLVM IR
+|
+| ISelLowering （関数呼び出し規約などSelectionDAGでは扱えない要素を消す）
+v
+SelectionDAG （仮想的/物理的なレジスタによる表現）
+|
+| ISelDAGToDAG
+v
+DAG （MachineInstrのリスト）（命令の順序を決める）
+|
+|
+v
+（ここでSSA-basedの最適化・レジスタ割り付け・プロローグエピローグ挿入を行う）
+|
+| MCInstLower
+v
+MCInst
+....
+
+=== `utils/UpdateTestChecks/asm.py` を変更する
+
+`update_llc_test_checks.py` を使用するために必要な変更らしい。RISCVのための記述を参考にしながら追記すれば良い。
+
+=== `RV32KTargetLowering` を実装する
+
+とりあえずLLVM IRに近いところから実装していくことにする。 `RV32KTargetLowering` はLLVM IRを `SelectionDAG` に変換するためのクラスである。
+`RV32KISelLowering.{h,cpp}` で定義される。
+
+まずこのクラスのコンストラクタで、ターゲットの仕様を指定する。
+
+次いでメンバ関数の `LowerFormalArguments` で関数呼び出し時の引数の扱いについて記述する。
+ここでは引数はすべてレジスタ経由で渡されることにする。
+その場合、使用するレジスタクラスを指定して仮想レジスタを作成し、引数に割り付けて追加する。
+
+最後に `LowerReturn` で、関数呼び出しから戻るときの戻り値の扱いについて記述する。
+戻り値を解析し、そのすべてをレジスタに詰め込み（複数個あることを前提？）、最後に `RET_FLAG` を出力している
+footnote:[ここでの `RET_FLAG` は `RV32KDAGToDAGISel` にて `JR X1` に変換される疑似命令である。
+<<fox-llvm>>では直接 `jr` 命令を参照していたが、それよりも「関数からのリターンである」
+という意味的情報を付加できるというメリットがありそうだ（TODO；ほんまか？）]。
+ここの処理は全体的によくわからない（TODO；特に `Chain`, `Flag`, `RetOps` がどのような働きをしているのか判然としない）。
+`Chain` を通じて `SelectionDAG` がじゅじゅつなぎになっている？
+
+引数が渡ってくるレジスタを `CopyFromReg` でくるむことで、その（仮想的/物理的）レジスタがこの `SelectionDAG` の
+外側で定義されたものであることを示している。
+
+なおRV32Kは下位（sub）に位置づけられるべきターゲットが存在しないが、
+それでもターゲットの情報を保持するために `RV32KSubTarget` を定義することが必要である。
+`CPUName` は `RV32K.td` や `RV32KMCTargetDesc` と合わせて `generic-rv32k` としておく。
+Lanaiの実装を見ると `generic` だけで統一しても良いようだ（TODO）。
+
+`setBooleanContents(ZeroOrOneBooleanContent);` はターゲットが1/0でtrue/falseを判定することを設定する。
+
+さて上記のように関数呼び出し時の処理を記述するためには、
+そもそも関数呼び出し規約の定義を行う必要がある。これは `RV32KCallingConv.td` にて行う。
+関数呼び出し時の引数・戻り値を処理するためのレジスタを指定する。またcallee-savedなレジスタも指定する。
+
+ここで戻り値を返すためのレジスタを複数指定することができるようだ。
+これはおそらくLLVM IRが複数の戻り値を扱うことができることの単純な反映であろうし（TODO；ほんまか？）、
+また例えばRISC VのCalling conventionではa0とa1が戻り値を返すためのレジスタとして指定されているためでも
+あると思う。
+
+なおここで `sp` である `x2` をcallee-savedとして指定する必要はない。
+というのもこの処理は関数プロローグ・エピローグで行うことに（将来的に）なるからだ
+footnote:[<<github_riscv-llvm_patch_13>>のコミットメッセージを参考のこと。]。
+
+=== `RV32KDAGToDAGISel` を実装する
+
+`SelectionDAG` をRV32Kコードに変換するためのクラスを実装する。 `RV32KISelDAGToDAG.cpp` で実装される。
+このクラスのエントリポイントは `Select` であるが、これ自体はTableGenが生成する関数である `SelectCode` を
+呼び出すだけである。そこでこの処理の本体は `RV32KInstrInfo.td` に記述されることになる。
+
+RISCVのCompressedの実装を見ると `Pat` を継承しない方法で処理をしていた。よくわからない（TODO）。
+
+ALU操作のみにとりあえず対応するため、現状対応するのは `ADD` と `SUB` 、それから便宜上必要になる
+`PseudoRET` の3つのみである。
+
+=== `RV32KFrameLowering` を実装する
+
+関数のプロローグとエピローグを出力するためのクラスを実装する。
+これらではスタックフレームサイズの調整を行う。
+とはいいつつもこれらはまだ実装の必要がないため、ただのプレースホルダになっている。
+
+スタックがアドレス負方向に伸びることを `TargetFrameLowering` のコンストラクタの第一引数に
+`StackGrowDown` を渡すことで表現している。
+
+=== `RegisterInfo` を実装する
+
+まず `RV32KRegisterInfo.td` を変更し、レジスタを割付優先度順に並び替える。
+
+続いて `RV32KRegisterInfo` クラスを実装する。
+`getReservedRegs` で通常のレジスタ割り付けでは使用しないレジスタを指定する。
+
+=== `RV32KAsmPrinter` と `RV32KMCInstLower` を実装する
+
+<<github_riscv-llvm_patch_13>>と同様の実装をすればよい。
+本体の処理は `LowerRV32KMachineInstrToMCInst` である。
+これは `MachineInstr` を `MCInst` に変換している。
+
+=== その他
+
+ビルドに必要なファイルなどを実装する。
+
+`RV32KInstrInfo` に `let guessInstructionProperties = 0;` という文を追加している。
+命令の属性（ `hasSideEffects` など）を推論するためのオプションのようだ（TODO）。
+
+`RV32KGenInstrInfo.inc` を読み込むため `RV32KInstrInfo.{h,cpp}` を追加する。
+
+`RV32KTarget>achine.{h,cpp}` を変更する。ここでは `RV32KSubtarget` のインスタンスを
+得るための `getSubtargetImpl` を実装すると同時に、実行パスに
+`RV32KDagToDAGISel` を挿入するために `RV32KPassConfig` を実装する
+footnote:[他の変換は `RV32KSubtarget` 経由で呼び出される。この変換のみが異なるようだ。]。
+
+=== テストを行う
+
+`CodeGen` のためのテストを作成する。これはLLVM IRを入力し、出力されるアセンブリが正しいかどうかを判定するものである。
+
+テストの枠組みに頼らず、手でテストを行うためには次のようにする。
+....
+$ cat test.ll
+define i32 @sub(i32 %a, i32 %b) nounwind {
+; RV32K-LABEL: sub:
+; RV32K:       # %bb.0:
+; RV32K-NEXT:    sub x8, x9
+; RV32K-NEXT:    jr x1
+  %1 = sub i32 %a, %b
+  ret i32 %1
+}
+
+$ bin/llc -mtriple=rv32k -verify-machineinstrs < test.ll
+	.text
+	.file	"<stdin>"
+	.globl	sub                     # -- Begin function sub
+	.p2align	3
+	.type	sub,@function
+sub:                                    # @sub
+# %bb.0:
+	sub	x8, x9
+	jr	x1
+.Lfunc_end0:
+	.size	sub, .Lfunc_end0-sub
+                                        # -- End function
+
+	.section	".note.GNU-stack","",@progbits
+....
+ついに我々はLLVM IRからコード生成を行うその第一歩を踏み出せたようだ。Here we go!
+footnote:[言い換えればここからが本番ということで、ここまでは長い長い前座だったのだ。
+それでも一つ終わったことは良いことだ。祝杯にコーヒーを入れよう。]
+
+=== `SelectionDAG` とはなにか
+
+<<llvm-code_generator-target_independent_code_gen_alg>>を参考にまとめる。
+
+* `SelectionDAG` は `SDNode` をノードとする有向非巡回グラフである。
+** `SDNode` は大抵opcodeとオペランドを持つ。
+** `include/llvm/CodeGen/ISDOpcodes.h` を見るとどのようなものがあるか分かる。
+* `SelectionDAG` は2つの値を持つ：データフローとコントロールフロー
+** データフローは単に値がノードになっているだけ。
+** "`chain`" ノードによって副作用を持つ操作（load, store, call, returnなど）の順序が決まる。
+*** 副作用を持つ操作はすべてchainを入力として受け取り、新たなchainを出力しなければならない。
+**** 伝統的にchainの入力は0番目のオペランドになっており、出力は最後の値になっている。ただしinstruction selectionが起こった後はそうとも限らない。
+* "`legal`" なDAGは、そのターゲットがサポートしている操作・型のみで構成されている。
+
+`SelectionDAG` を用いたinstruction selectionは `SelectionDAG` を最適化・正規化することで行われる
+<<llvm-code_generator-selectiondag_instruction_selection>>。
+この過程は `-view-dag-combine1-dags` などのオプションを `llc` に与えることでグラフとして見ることができる。
+....
+$ bin/llc -mtriple=rv32k -view-dag-combine1-dags  < test.ll
+# DOTファイルビューワがあればそれが起動する。ない場合は次のようにしてSVGに変換する。
+$ dot -Tsvg /tmp/dag.sub-86df29.dot -o dot.svg
+....
+image::img/simple_sub_combine1.svg[]
+それっぽい。
+
+== 定数に対応する
+
+定数をレジスタに読み込むためのパターンを `RV32KInstrInfo.td` に追加する。
+すなわち `simm6` が来たら `li` を呼ぶようにすれば良い。ただしここで `li` のオペランドには、
+渡ってきた即値のみを渡せばよいことに注意が必要である。すなわちレジスタを指定する必要はない。
+これは `Pat` の右側に書くDAGは `(ins)` のオペランドのみを記載すればよいからである。
+
+なお `simm6` を `Pat` でも使用できるように `ImmLeaf` を `simm6` の継承先に追加する必要がある。
+
+== メモリ操作に対応する
+
+ロードとストアのための `Pat` を追加する。offsetが0の場合と非ゼロの場合で別の `def` が必要なことに注意。
+`lw` を `load` に対応付け `sw` を `store` に対応付ければ、最低限の実装が整う。
+RISC Vではさらに `sextloadi8` を `LB` に対応させるなどしているが、
+RV32Kv1ではこれらの命令が無い。 `lw` と他の命令を合わせれば実現できるかもしれないが、
+その実装方法がよくわからない。 `setOperationAction` で `Custom` 指定とかすればできそうだが詳細不明。(TODO)
+footnote:[その後RV32Kv2以降でHW側で実装と合意。]
+
+[[implement-copyPhysReg]]
+なお参考にするコミット<<github_riscv-llvm_patch_15>>のコミットメッセージには `copyPhysReg` を
+実装する必要があると書いてあるが、実際に実装してみるとこれは必要ない。
+この関数はどうやらレジスタの中身を移動させる命令を生成するための関数のようで、
+使用するレジスタが多くなると使われるようだ。必要になるまで遅延することにする。
+
+続くコミット<<github_riscv-llvm_patch_16>>はグローバル変数を扱うためのコミットのようだ。
+グローバル変数を `load` する場合、まずその読み込むべきアドレスの値をレジスタに作る必要があるが、
+即値ロード命令が限定されているため、即値のアドレスの上位ビットと下位ビットを分けて読み込む必要がある。
+そのためにコミットでは `%hi` と `%lo` を使用しているが、現状我々のバックエンドにはこれらが実装されていない。
+そこで一旦このコミットは飛ばすことにするfootnote:[そもそもRV32Kv1の枠組みでは32bit即値を読み込むことが
+困難であるという事情もある。]。
+
+== 条件分岐に対応する
+
+条件分岐に<<github_riscv-llvm_patch_17>>を参考にして対応する。
+ISDには条件分岐として `BRCOND` と `BR_CC` の2つがある。
+`BRCOND` は条件分岐のみを行うのに対し、 `BR_CC` は2ノード間の比較と条件分岐をともに行う。
+ここでは、よりパターンマッチが容易な `BRCOND` にのみ対応することにし、
+`BR_CC` は `setOPerationAction` を用いて `Expand` する
+footnote:[おそらく `BRCOND` に書き換えるということ。どう書き換えるかがどこで定義されているかはよくわからない。TODO]。
+
+=== `setlt` と `setgt` に対応する
+
+TableGenを用いて `brcond` に対するパターンマッチを記述する。
+
+RV32Kv1では `BEQZ` と `BNEZ` のみが定義されているfootnote:[RV32Cではこれらは `BEQ` ・ `BNE` 命令から置換する形で使用される。]。
+そこで `setlt` と `setgt` が自然に定義できる。すなわち `$a < $b` という比較なら `SLT $a, $b` 後 `BNEZ $a, hoge` とする。
+
+分岐命令のパターンマッチでは `bb` というクラスがよく登場する。（ `bb:$imm9` ）。これはおそらくbasic blockで、
+分岐の際に用いるプリミティブな型のようだ。パターンマッチの後半で正しい型を指定することで、実際の型を指定できる気がする。TODO
+これと絡む即値の型は `Operand<i32>` の代わりに `Operand<OtherVT>` を継承する必要があるようだ。
+なおbasic blockを処理するために `MachineOperand::MO_MachineBasicBlock` についての場合分けを
+`LowerRV32KMachineOperandToMCOperand` に追加する必要がある。
+
+LLVM IRをテキスト形式で書く際 `brcond` という命令は直接は存在せず `br` 命令を介してこれを使うことになる。
+その際 `false` 部の処理を行うため `br` 命令も発行されることに注意が必要である。
+すなわち `brcond` のためのパターンマッチのみならず `br` のためのパターンマッチも潜在的に不可欠である。
+これを解決するために
+
+    def : Pat<(br bb:$imm12), (J simm12_lsb0:$imm12)>;
+
+としても良いように見えるし、実際動く。
+しかしRISC Vの実装では `PseudoBR` を定義して解消しているため、とりあえずこれを採用してみる
+footnote:[要するにちゃんとした理由がないのだが、そのうち同様の実装を必要とする
+Pseudo命令が出てくるだろうという予測はある。]。
+
+このPseudo命令を定義するためには `RV32KAsmPrinter::lowerOperand` を
+<<github_riscv-llvm_patch_16>>を参考にして実装する必要がある。
+
+RV32Kv1の現在の定義では `SLT` のみが存在するため、ナイーブに定義できるのは `setlt` のみである。
+これを使用するようにSelectionDAGを構成するためには次のようなLLVM IRを入力する。
+....
+define i32 @foo(i32 %a, i32 *%b) {
+  %val3 = load volatile i32, i32* %b
+  %tst3 = icmp slt i32 %val3, %a
+  br i1 %tst3, label %end2, label %end
+end:
+  ret i32 1
+end2:
+  ret i32 0
+}
+....
+ここで
+....
+  br i1 %tst3, label %end2, label %end
+....
+とすると途中で `setge` に変換されてしまうため注意が必要である。
+
+image::img/brcond_with_br.svg[]
+
+引数を逆転させることで `setgt` についてもパターンマッチ可能である。
+
+なお `setlt` などを挟まず `brcond` が単体で現れる場合についてもパターンマッチが可能だが、
+これについてLLVM IRでテストを書くと `and` のSelectionDAGが現れてしまうためRV32Kv1では
+コンパイルできない。仕方がないのでテストはなしにしておく。
+
+=== `seteq` と `setne` に対応する
+
+`sub` と `beqz` を組み合わせることで `seteq` を実現可能である。
+また `sub` と `bnez` を組み合わせることで `setne` を実現可能である。
+しかし `sub` は左辺を破壊する命令のため、前後の命令との兼ね合いによってはレジスタの値を別のレジスタに移したり、
+スタックに保存する必要があるfootnote:[実はこの時点ではこの需要は微妙なところだが、まあそのうち必要になることに疑いはない。]。そこで<<implement-copyPhysReg>>で示唆したように
+<<github_riscv-llvm_patch_15>>を参考にして `RV32KInstrInfo::copyPhysReg` を実装し、
+さらに<<github_riscv-llvm_patch_17>>を参考にして `RV32KInstrInfo::storeRegToStackSlot` と
+`RV32KInstrInfo::loadRegFromStackSlot` を実装する。
+またこれに必要な `RV32KRegisterInfo::eliminateFrameIndex` も実装する。
+この関数は `MachineInstr` にオペランドとして含まれる `FrameIndex` を
+`FrameReg` と `Offset` に変換するための関数である。
+`storeRegToStackSlot` などではオペランドとして `FrameIndex` を指定し、
+即値は `0` にしておく。そのうえで `eliminateFrameIndex` を呼び出し、
+正しいオペランドに変換しているfootnote:[と思う。裏はあんまり取っていない。TODO]。
+ここでRV32Kv1の `lw` と `sw` が符号**なし**即値をとることが問題になる。
+すなわち `Offset` が負数になる場合に対処できない。
+この問題はどうすることもできないので、とりあえず放置する。
+また `FrameReg` はRV32Kv1でははっきりと決まっていいないがとりあえず `X15` にしておく。
+
+ここまでで次のようなLLVM IRが
+....
+define void @foo(i32 %a, i32 *%b) {
+  %val1 = load volatile i32, i32* %b
+  %tst1 = icmp slt i32 %val1, %a
+  br i1 %tst1, label %end, label %test2
+
+test2:
+  %val2 = load volatile i32, i32* %b
+  %tst2 = icmp sgt i32 %val2, %a
+  br i1 %tst2, label %end, label %test3
+
+test3:
+  %val3 = load volatile i32, i32* %b
+  %tst3 = icmp eq i32 %val3, %a
+  br i1 %tst3, label %end, label %test4
+
+test4:
+  %val4 = load volatile i32, i32* %b
+  %tst4 = icmp ne i32 %val4, %a
+  br i1 %tst4, label %end, label %test5
+
+test5:
+  %val5 = load volatile i32, i32* %b
+  br label %end
+
+end:
+  ret void
+}
+....
+次のようなRV32Kv1コードに変換される。
+....
+	.globl	foo                     # -- Begin function foo
+	.p2align	3
+	.type	foo,@function
+foo:                                    # @foo
+# %bb.0:
+	lw	x10, 0(x9)
+	slt	x10, x8
+	bnez	x10, .LBB0_5
+	j	.LBB0_1
+.LBB0_1:                                # %test2
+	lw	x10, 0(x9)
+	mv	x11, x8
+	slt	x11, x10
+	bnez	x11, .LBB0_5
+	j	.LBB0_2
+.LBB0_2:                                # %test3
+	lw	x10, 0(x9)
+	sub	x10, x8
+	beqz	x10, .LBB0_5
+	j	.LBB0_3
+.LBB0_3:                                # %test4
+	lw	x10, 0(x9)
+	sub	x10, x8
+	bnez	x10, .LBB0_5
+	j	.LBB0_4
+.LBB0_4:                                # %test5
+	lw	x8, 0(x9)
+.LBB0_5:                                # %end
+	jr	x1
+.Lfunc_end0:
+	.size	foo, .Lfunc_end0-foo
+                                        # -- End function
+
+	.section	".note.GNU-stack","",@progbits
+....
+
+== 関数呼び出しに対応する
+
+関数呼び出しをサポートするためにはi) `PseudoCALL` を実装しii) `RV32KTargetLowering::LowerCall`
+を実装すれば良いようだ。前者は `JAL` に展開され、
+後者はLLVM IRから `SelectionDAG` への変換を担う。
+
+LLVM IRの `call` は、まず `lui` と `addi` で関数のアドレスを取得した後、
+`jalr` でその場所で飛ぶようなアセンブリに変換される。ただLLVM 9の `clang` でアセンブリを出力
+させると `call` 命令を使うものが出力される。RISC Vのソースコードを見ると次のようにある。
+....
+// PseudoCALL is a pseudo instruction which will eventually expand to auipc
+// and jalr while encoding. This is desirable, as an auipc+jalr pair with
+// R_RISCV_CALL and R_RISCV_RELAX relocations can be be relaxed by the linker
+// if the offset fits in a signed 21-bit immediate.
+// Define AsmString to print "call" when compile with -S flag.
+// Define isCodeGenOnly = 0 to support parsing assembly "call" instruction.
+....
+アセンブリ出力時のみ `call` を使うようだ。
+
+関数のアドレスはグローバルなので、そのアドレスを取得するコードを `lowerCall` 中に
+記述する必要がある。パッチ<<github_riscv-llvm_patch_18>>では `lowerGlobalAddress` を読んでいるが、
+これは実装していない。そこでこの処理を応急処置的に書くことにする。
+現状のRV32Kv1ではすべての関数呼び出しのアドレスはFxiupで解決される（relocationに回らない）
+と前提しているので、そのとおりに実装する。
+
+`LowerCall` ではおおよそi) 引数を解析してii) `CALLSEQ_START` ノードを出力しiii)
+引数を処理するためのDAG（ `CopyToReg` ）をはさみiii) `CALL` ノードを出力しiv)
+`CALLSEQ_END` ノードを出力し v) 返ってきた値を `CopyFromReg` ノードを出力することで
+取り出している、ようだ。他にも様々な処理が挟まっているが、よくわからない。TODO
+
+`CopyFromReg` は物理レジスタ（physical register）**から**仮想レジスタ（virtual register）に
+値をコピーするようなDAGを生成し、逆に `CopyToReg` は物理レジスタ**へ**仮想レジスタの中の
+値をコピーするようなDAGを生成する。一般のレジスタ割り付けが行われる以前であっても、
+例えば関数の引数・戻り値のように割り付けるべき物理レジスタが決まる場合がある。
+この区別をこのDAGは行っているようだ。
+したがって `LowerCall` では `CopyToReg` を使って引数を詰め込み、
+関数を呼び、それが終わったら `CopyFromReg` を使って戻り値を取り出しているということになる。
+
+さて `PseudoCALL` はパッチ<<github_riscv-llvm_patch_18>>では `jalr` に展開される。
+一見 `jal` に展開すれば良いように思えるし、実際RISC Vの実装ではそうなっているのだが、
+そうするためには `PseudoCALL` の `ins` に指定するクラスを作成する必要がある。
+RISC Vでは `bare_symbol` が、Lanaiでは `CallTarget` がそれに当たる。
+複雑で良くわからないのでとりあえずここは `jalr` に展開することにする。
+
+`let Defs = [X1]` を `PseudoCALL` にかぶせているのは、おそらく `X1` が `jalr` によって
+書き換えられることを意味している。 `jalr` が `X1` を `outs` に含めていないのは、
+おそらく `jalr` が `X1` を出力するというわけではないからだと思うがわからない。TODO
+
+`getCallPreservedMask` を定義する必要がある。Callee-savedなレジスタに関する情報を
+渡すための関数のようだ。（おそらく；TODO）TableGenが再生する `CSR_RegMask` をそのまま返せば良い。
+
+`CallSeqStart` と `CallSeqEnd` は `ADJCALLSTACKDOWN` ・ `ADJCALLSTACKUP` に結びつける必要がある。
+これらが `let Defs = [X2], Uses = [X2]` で囲まれているのは（おそらく） `X2` を書き換えつつ、
+かつその（過去の？；TODO）値を使用するから。
+
+すると次のようなエラーが出る。
+
+....
+Can't store this register to stack slot
+UNREACHABLE executed at /home/anqou/ano/secure_vm/llvm-project/llvm/lib/Target/RV32K/RV32KInstrInfo.cpp:55!
+....
+
+そこで `ADJCALLSTACKDOWN` らを `RV32KGenInstrInfo` のコンストラクタに渡すようにすると、
+また次のようなエラーが出る。
+
+....
+Call Frame Pseudo Instructions do not exist on this target!
+UNREACHABLE executed at /home/anqou/ano/secure_vm/llvm-project/llvm/include/llvm/CodeGen/TargetFrameLowering.h:299!
+....
+
+そこで `eliminateCallFramePseudoInstr` を実装する。
+この関数は関数呼び出しのための疑似命令を具体的な命令に置き換えるための関数のようだが、
+ここではその疑似命令を削除するに留める。
+
+するとまた初めのエラーが再燃した。
+
+....
+Can't store this register to stack slot
+UNREACHABLE executed at /home/anqou/ano/secure_vm/llvm-project/llvm/lib/Target/RV32K/RV32KInstrInfo.cpp:56!
+....
+
+よくよく見てみると、当該ソースコードは次のようになっている。
+
+....
+void RV32KInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
+                                         MachineBasicBlock::iterator I,
+                                         unsigned SrcReg, bool IsKill, int FI,
+                                         const TargetRegisterClass *RC,
+                                         const TargetRegisterInfo *TRI) const {
+  DebugLoc DL;
+  if (I != MBB.end())
+    DL = I->getDebugLoc();
+
+  if (RV32K::GPRCRegClass.hasSubClassEq(RC))
+    BuildMI(MBB, I, DL, get(RV32K::SW))
+        .addReg(SrcReg, getKillRegState(IsKill))
+        .addFrameIndex(FI)
+        .addImm(0);
+  else
+    llvm_unreachable("Can't store this register to stack slot");
+}
+....
+
+レジスタをスタックに対比するMIを生成するためのコードである。
+ここで `sw` 命令が `GPRC` レジスタのみをとることが災いし `x1` をスタックに積むことができない。
+したがって**RV32Kv1の枠組みでは関数呼び出しを行えないことが判明した**。
+
+RV32Kv1のためのLLVMバックエンド作成はここで（突然）中止であるfootnote:[作りながら、このISAでは
+限界がありそうだと感じていたが、しかしLLVMがハングするまでここで中止になることはわからなかった。]
+footnote:[あとから気づいたが、直接スタックに積むのではなく一旦 `GPRC` のレジスタに `mv` してから
+スタックに積めばこの問題を回避できたのかもしれない。ただここで「どのレジスタに一旦退避するか」を
+どう求めればよいかは良くわからない。]。
+
+[bibliography]
+== 参照
+
+- [[[github_riscv-llvm_docs_01,1]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/01-intro-and-building-llvm.mkd
+- [[[llvm_getting-started,2]]] https://llvm.org/docs/GettingStarted.html
+- [[[clang_gettings-started,3]]] https://clang.llvm.org/get_started.html
+- [[[asciidoctor_user-manual,4]]] https://asciidoctor.org/docs/user-manual/
+- [[[riscv,5]]] https://riscv.org/
+- [[[riscv_specifications,6]]] https://riscv.org/specifications/
+- [[[fox-llvm,7]]] 『きつねさんでもわかるLLVM〜コンパイラを自作するためのガイドブック〜』（柏木 餅子・風薬・矢上 栄一、株式会社インプレス、2013年）
+- [[[github_riscv-llvm_docs_02,8]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/02-starting-the-backend.mkd
+- [[[github_riscv-llvm_patch_0002,9]]] https://github.com/lowRISC/riscv-llvm/blob/master/0002-RISCV-Recognise-riscv32-and-riscv64-in-triple-parsin.patch
+- [[[github_riscv-llvm,10]]] https://github.com/lowRISC/riscv-llvm
+- [[[youtube_llvm-backend-development-by-example,11]]] https://www.youtube.com/watch?v=AFaIP-dF-RA
+- [[[msyksphinz_try-riscv64-llvm-backend,12]]] http://msyksphinz.hatenablog.com/entry/2019/01/02/040000_1
+- [[[github_riscv-llvm_patch_03,13]]] https://github.com/lowRISC/riscv-llvm/blob/master/0003-RISCV-Add-RISC-V-ELF-defines.patch
+- [[[github_riscv-llvm_patch_04,14]]] https://github.com/lowRISC/riscv-llvm/blob/master/0004-RISCV-Add-stub-backend.patch
+- [[[github_riscv-llvm_patch_06,15]]] https://github.com/lowRISC/riscv-llvm/blob/master/0006-RISCV-Add-bare-bones-RISC-V-MCTargetDesc.patch
+- [[[github_riscv-llvm_patch_10,16]]] https://github.com/lowRISC/riscv-llvm/blob/master/0010-RISCV-Add-support-for-disassembly.patch
+- [[[llvm-writing_backend-operand_mapping,17]]] https://llvm.org/docs/WritingAnLLVMBackend.html#instruction-operand-mapping
+- [[[llvm-writing_backend,18]]] https://llvm.org/docs/WritingAnLLVMBackend.html
+- [[[github_riscv-llvm_patch_07,19]]] https://github.com/lowRISC/riscv-llvm/blob/master/0007-RISCV-Add-basic-RISCVAsmParser.patch
+- [[[github_riscv-llvm_patch_08,20]]] https://github.com/lowRISC/riscv-llvm/blob/master/0008-RISCV-Add-RISCVInstPrinter-and-basic-MC-assembler-te.patch
+- [[[llvm-tablegen,21]]] https://llvm.org/docs/TableGen/index.html
+- [[[github_riscv-llvm_patch_09,22]]] https://github.com/lowRISC/riscv-llvm/blob/master/0009-RISCV-Add-support-for-all-RV32I-instructions.patch
+- [[[llvm_dev_ml-tablegen_definition_question,23]]] http://lists.llvm.org/pipermail/llvm-dev/2015-December/093310.html
+- [[[llvm_doxygen-twine,24]]] https://llvm.org/doxygen/classllvm_1_1Twine.html
+- [[[llvm-tablegen-langref,25]]] https://llvm.org/docs/TableGen/LangRef.html
+- [[[github_riscv-llvm_docs_05,26]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/05-disassembly.mkd
+- [[[github_riscv-llvm_patch_11,27]]] https://github.com/lowRISC/riscv-llvm/blob/master/0011-RISCV-Add-common-fixups-and-relocations.patch
+- [[[github_riscv-llvm_docs_06,28]]] https://github.com/lowRISC/riscv-llvm/blob/master/docs/06-relocations-and-fixups.mkd
+- [[[github_riscv-llvm_patch_13,29]]] https://github.com/lowRISC/riscv-llvm/blob/master/0013-RISCV-Initial-codegen-support-for-ALU-operations.patch
+- [[[speakerdeck-llvm_backend_development,30]]] https://speakerdeck.com/asb/llvm-backend-development-by-example-risc-v
+- [[[llvm-code_generator,31]]] https://llvm.org/docs/CodeGenerator.html
+- [[[llvm-code_generator-target_independent_code_gen_alg,32]]] https://llvm.org/docs/CodeGenerator.html#target-independent-code-generation-algorithms
+- [[[llvm-code_generator-selectiondag_instruction_selection,33]]] https://llvm.org/docs/CodeGenerator.html#selectiondag-instruction-selection-process
+- [[[github_riscv-llvm_patch_15,34]]] https://github.com/lowRISC/riscv-llvm/blob/master/0015-RISCV-Codegen-support-for-memory-operations.patch
+- [[[cpu0,35]]] https://jonathan2251.github.io/lbd/
+- [[[elvm-llvm_backend,36]]] https://github.com/shinh/llvm/tree/elvm
+- [[[elvm-slide,37]]] http://shinh.skr.jp/slide/llel/000.html
+- [[[github_riscv-llvm_patch_16,38]]] https://github.com/lowRISC/riscv-llvm/blob/master/0016-RISCV-Codegen-support-for-memory-operations-on-globa.patch
+- [[[github_riscv-llvm_patch_17,39]]] https://github.com/lowRISC/riscv-llvm/blob/master/0017-RISCV-Codegen-for-conditional-branches.patch
+- [[[todai_llvm_backend,40]]] https://github.com/cpu-experiment-2018-2/llvm/tree/master/lib/Target/ELMO
+- [[[todai_llvm_backend-article,41]]] http://uenoku.hatenablog.com/entry/2018/12/25/044244
+- [[[github_riscv-llvm_patch_18,42]]] https://github.com/lowRISC/riscv-llvm/blob/master/0018-RISCV-Support-for-function-calls.patch
+- [[[llvm-langref,43]]] http://llvm.org/docs/LangRef.html
+- [[[fpga_develop_diary,44]]] http://msyksphinz.hatenablog.com/
