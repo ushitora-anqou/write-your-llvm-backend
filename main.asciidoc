@@ -78,8 +78,8 @@ LLVMバックエンドを開発する際に参考にできる書籍やWebサイ�
 ** そのときのCoding Labは<<lowrisc-devmtg18>>より閲覧できる。
 * Create an LLVM Backend for the Cpu0 Architecture<<cpu0>>
 ** Cpu0という独自アーキテクチャのLLVMバックエンドを作成するチュートリアル。多少古いが、内容が網羅的で参考になる。英語が怪しい。
-* FPGA開発日記<<fpga_develop_diary>>
-** Cpu0の資料<<cpu0>>をもとに1からRISC-Vバックエンドを作成する過程がブログエントリとして公開されている。GitHubに実装も公開されている<<fpga_develop_diary-llvm>>。
+* FPGA開発日記<<msyksphinz_github_io-llvm>>
+** Cpu0の資料<<cpu0>>をもとに1からRISC-Vバックエンドを作成する過程がブログ<<fpga_develop_diary>>として公開されている。GitHubに実装も公開されている<<fpga_develop_diary-llvm>>。
 * ELVMバックエンド<<elvm-llvm_backend>>
 ** 限られた命令でLLVM IRの機能を達成する例として貴重。でも意外とISAはリッチだったりする。
 ** 作成者のスライドも参考になる<<elvm-slide>>。
@@ -1145,3 +1145,4 @@ https://github.com/virtualsecureplatform/llvm-cahp/commit/a03e70e9157510937ca522
 - [[[llvm_devmtg-larintrick,161]]] https://llvm.org/devmtg/2012-11/Larin-Trick-Scheduling.pdf
 - [[[llvm-schedinorder,162]]] https://llvm.org/devmtg/2016-09/slides/Absar-SchedulingInOrder.pdf
 - [[[llvm_2003f,163]]] http://na2co3.exp.jp/llvm-2003f-fib-trace.html
+- [[[msyksphinz_github_io-llvm,164]]] https://msyksphinz.github.io/github_pages/llvm/
