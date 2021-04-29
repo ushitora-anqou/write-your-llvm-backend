@@ -296,16 +296,14 @@ LLVM (http://llvm.org/):
     $ bin/llvm-lit -as --filter 'CAHPV4' test # テスト結果を詳細に表示する。
     $ bin/llvm-lit -as --filter 'CAHPV4' --debug test # デバッグ情報を表示する。
 
-== !!!ここより下はまだ書き直されていません!!!
-
 == アセンブラを作る
 
-https://github.com/virtualsecureplatform/llvm-cahp/commit/2c31c0a80020cc50bba6df1c35da228905190d97[2c31c0a80020cc50bba6df1c35da228905190d97]
+https://github.com/virtualsecureplatform/llvm-cahp/commit/1093d7862020d0e98195c47e7f00294415803d0c[1093d7862020d0e98195c47e7f00294415803d0c]
 
 この章ではLLVMバックエンドの一部としてアセンブラを実装します。
 具体的にはLLVMのMCLayerを実装し、アセンブリからオブジェクトファイルへの変換を可能にします。
 一度にアセンブラ全体を作るのは難しいため、まずレジスタのみを使用する演算命令に絞って実装し、
-その後メモリを使用する命令をカバーします。
+続いて即値を使う命令を実装し、その後メモリを使用する命令やジャンプ命令をカバーします。
 
 === TableGenファイルを追加する
 
@@ -322,52 +320,67 @@ LLVMバックエンドでは、アーキテクチャが持つレジスタや命�
 ここでは、簡単なアセンブラを実装するために最低限必要なTableGenファイルを追加します。
 内訳は次のとおりです。
 
-* `CAHP.td`: 下のTableGenファイルをincludeし、その他もろもろを定義。
-* `CAHPRegisterInfo.td`: レジスタを定義。
-* `CAHPInstrFormats.td`: 命令形式を定義。
-* `CAHPInstrInfo.td`: 命令を定義。
+* `CAHPV4.td`: 下のTableGenファイルをincludeし、その他もろもろを定義。
+* `CAHPV4RegisterInfo.td`: レジスタを定義。
+* `CAHPV4InstrFormats.td`: 命令形式を定義。
+* `CAHPV4InstrInfo.td`: 命令を定義。
 
-順に説明します。 `CAHP.td` がTableGenファイル全体をまとめているTableGenファイルで、
+順に説明します。 `CAHPV4.td` がTableGenファイル全体をまとめているTableGenファイルで、
 内部では `include` を使って他のファイルを読み込んでいます。
 
     include "llvm/Target/Target.td"
 
-    include "CAHPRegisterInfo.td"
-    include "CAHPInstrInfo.td"
+    include "CAHPV4RegisterInfo.td"
+    include "CAHPV4InstrInfo.td"
 
 また同時に、今回想定するプロセッサを表す `ProcessorModel` や、
-現在実装しているターゲットの `CAHP` について定義しています。
+現在実装しているターゲットの `CAHPV4` について定義しています。
 // FIXME: ここの定義が具体的にC++コードにどう反映されるかの確認が必要。
 //        まぁこう書いておけば問題ないという認識でもとりあえず良い気もするけど……。
 
-`CAHPRegisterInfo.td` ではCAHPに存在するレジスタを定義します。
-まず `Register` を継承して `class CAHPReg` を作り、これに基本的なレジスタの性質をもたせます。
-ついで `class CAHPReg` の実体として `X0` から `X15` を作成します。
+`CAHPV4RegisterInfo.td` ではCAHPV4に存在するレジスタを定義します。
+まず `Register` を継承して `class CAHPV4Reg` を作り、これに基本的なレジスタの性質をもたせます。
+ついで `class CAHPV4Reg` の実体として `X0` から `X31` を作成します。
 `alt` にはレジスタの別名を指定します。
 // FIXME: ABIRegAltName がどういう役割を果たしてるのか要検証。
 //        多分 `getRegisterName` の第二引数に何も渡さなかったときにAltNameを表示
 //        させるのに必要なんだと思うけど、裏をとってない。
 最後に、レジスタをまとめて `RegisterClass` である `GPR`
 （General Purpose Register; 汎用レジスタの意）を定義します。
-このあと命令を定義する際にはこの `RegisterClass` 単位で指定します。
 ここでレジスタを並べる順番が先であるほどレジスタ割り付けで割り付けられやすいため、
 caller-savedなもの（使ってもspill outが起こりにくいもの）を先に並べておきます。
+並べる際には `X0, X1, ...` と並べてもよいのですが、連番の場合は `sequence` を使うことができます。
+`RegisterClass` のテンプレート引数には、他に、名前空間・レジスタの型・
+メモリ上に保存されるときのアラインメントを指定します。
 
-`GPR` と同様に `SP` という `RegisterClass` も作成し、 `X1` 、
-つまりスタックポインタを表すレジスタのみを追加しておきます。
-この `RegisterClass` を命令のオペランドに指定することで
-`lwsp` や `swsp` などの「スタックポインタのみを取る命令」を表現することができます。
+  def GPR : RegisterClass<"CAHPV4", [i16], 16, (add
+      (sequence "X%u", 10, 17), // X10, X11, ..., X17, と明示的に書いても同じ意味
+      (sequence "X%u", 5, 7),
+      (sequence "X%u", 28, 31),
+      (sequence "X%u", 8, 9),
+      (sequence "X%u", 18, 27),
+      (sequence "X%u", 0, 4)
+    )>;
 
-命令は `CAHPInstrFormats.td` と `CAHPInstrInfo.td` に分けて記述します。
-`CAHPInstrFormats.td` ではおおよその命令の「形」を定義しておき、
-`CAHPInstrInfo.td` でそれを具体化します。言葉で言ってもわかりにくいので、コードで見ます。
-例えば24bit長の加算命令は次のように定義されます。
-まずCAHPの命令全体に共通する事項を `class CAHPInst` として定義します。
+このあと命令を定義する際にはこの `RegisterClass` 単位で指定するため、
+特定のレジスタしか取らないような命令では、その都度新しい `RegisterClass` を作る必要があります。
+// FIXME: GPRX0とGPRNoX0の説明
+// FIXME: 多分SPはCAHPv4では使わないので以下の段落は要らない。
+//`GPR` と同様に `SP` という `RegisterClass` も作成し、 `X1` 、
+//つまりスタックポインタを表すレジスタのみを追加しておきます。
+//この `RegisterClass` を命令のオペランドに指定することで
+//`lwsp` や `swsp` などの「スタックポインタのみを取る命令」を表現することができます。
+
+命令は `CAHPV4InstrFormats.td` と `CAHPV4InstrInfo.td` に分けて記述します。
+`CAHPV4InstrFormats.td` ではおおよその命令の「形」を定義しておき、
+`CAHPV4InstrInfo.td` でそれを具体化します。言葉で言ってもわかりにくいので、コードで見ます。
+例えば加算命令は次のように定義されます。
+まずCAHPV4の命令全体に共通する事項を `class CAHPV4Inst` として定義します。
 
 ....
-class CAHPInst<dag outs, dag ins, string opcodestr, string argstr, list<dag> pattern = []>
+class CAHPV4Inst<dag outs, dag ins, string opcodestr, string argstr, list<dag> pattern = []>
 : Instruction {
-  let Namespace = "CAHP";
+  let Namespace = "CAHPV4";
 
   dag OutOperandList = outs;
   dag InOperandList = ins;
@@ -376,46 +389,43 @@ class CAHPInst<dag outs, dag ins, string opcodestr, string argstr, list<dag> pat
 
   // Matching patterns used when converting SelectionDAG into MachineDAG.
   let Pattern = pattern;
+
+  let Size = 4;
+  bits<32> Inst;
 }
 ....
 
-次に、CAHPの24bit命令に共通する事項を `class CAHPInst` を継承した
-`class CAHP24Inst` として定義します。
+次いで、R形式（オペランドにレジスタを3つとる）命令を
+`class CAHPV4InstR` として定義します。 `class CAHPV4Inst` を継承します。
 
 ....
-// 24-bit instruction format.
-class CAHPInst24<dag outs, dag ins, string opcodestr, string argstr, list<dag> pattern = []>
-: CAHPInst<outs, ins, opcodestr, argstr, pattern> {
-  let Size = 3;
-  bits<24> Inst;
-}
-....
+// R-instruction format
+class CAHPV4InstR<bits<11> opcode, dag outs, dag ins, string opcodestr, string argstr>
+: CAHPV4Inst<outs, ins, opcodestr, argstr> {
+  bits<5> rd;
+  bits<5> rs1;
+  bits<5> rs2;
 
-さらに、24bit長加算命令の「形」である24bit R形式（オペランドにレジスタを3つとる）を
-`class CAHPInst24R` として定義します。 `class CAHPInst24` を継承します。
-
-....
-// 24-bit R-instruction format.
-class CAHPInst24R<bits<8> opcode, dag outs, dag ins, string opcodestr, string argstr>
-: CAHPInst24<outs, ins, opcodestr, argstr> {
-  bits<4> rd;
-  bits<4> rs1;
-  bits<4> rs2;
-
-  let Inst{23-20} = 0;
-  let Inst{19-16} = rs2;
-  let Inst{15-12} = rs1;
-  let Inst{11-8} = rd;
-  let Inst{7-0} = opcode;
+  let Inst{31-26} = 0;
+  let Inst{25-21} = rs2;
+  let Inst{20-16} = rd;
+  let Inst{15-11} = rs1;
+  let Inst{10-0} = opcode;
 }
 ....
 
 最後にこれを使って加算命令 `ADD` を定義します。
 
 ....
-def ADD : CAHPInst24R<0b00000001, (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-                      "add", "$rd, $rs1, $rs2">;
+def ADD  : CAHPV4InstR<0b00000001000, (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                       "add", "$rd, $rs1, $rs2">;
 ....
+
+// FIXME: don't careを指定する方法は無いように見えるので、とりあえず0にしておく
+// これは出力の際にはそれほど問題ではないが、
+// objdumpなどでは正しいバイナリ列を不正なものとみなす恐れがあるため
+// 問題になりうる。解決方法を探す必要あり。
+// let Inst{31-26} = ?; はいけるけど意味が違いそう。0b00?001みたいなのは駄目。
 
 上記の継承による構造を展開すると、結局 `class Instruction` を使って
 次のような定義を行ったことになります。
@@ -423,23 +433,23 @@ def ADD : CAHPInst24R<0b00000001, (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
 
 ....
 def ADD : Instruction {
-  let Namespace = "CAHP";
+  let Namespace = "CAHPV4";
 
   let Pattern = [];
 
-  let Size = 3; // 命令長は8bit * 3 = 24bit
-  bits<24> Inst;
+  let Size = 4; // 命令長は8bit * 4 = 32bit
+  bits<32> Inst;
 
-  bits<4> rd;  // オペランドrdは4bit
-  bits<4> rs1; // オペランドrs1は4bit
-  bits<4> rs2; // オペランドrs2は4bit
+  bits<5> rd;  // オペランドrdは5bit
+  bits<5> rs1; // オペランドrs1は5bit
+  bits<5> rs2; // オペランドrs2は5bit
 
   // 命令のエンコーディングは次の通り。
-  let Inst{23-20} = 0;        // 20〜23bit目は0
-  let Inst{19-16} = rs2;      // 16〜19bit目はrs2
-  let Inst{15-12} = rs1;      // 12〜15bit目はrs1
-  let Inst{11-8} = rd;        // 8〜11bit目はrd
-  let Inst{7-0} = 0b00000001; // 0〜7bit目は0bit目だけが1で残りは0
+  let Inst{31-26} = 0;               // 26〜31bit目は0
+  let Inst{25-21} = rs2;             // 21〜25bit目はrs2
+  let Inst{20-16} = rd;              // 16〜20bit目はrd
+  let Inst{15-11} = rs1;             // 11〜15bit目はrs1
+  let Inst{10-0} = 0b00000001000;    // 0〜10bit目はADDのopcode
 
   // 出力はレジスタクラスGPRのrdに入る。
   dag OutOperandList = (outs GPR:$rd);
@@ -456,52 +466,10 @@ TableGenにエンコードの処理を移譲することができますfootnote:
 複雑なエンコーディングを行うISAの場合は `Inst` フィールドを使用せず、
 自前で変換を行っている。]。
 
-続いて即値を用いる命令を見ます。例として `addi` を取り上げます。
-`addi` は8bit符号付き即値をオペランドに取ります。まずこれを定義します。
-
-    class ImmAsmOperand<string prefix, int width, string suffix> : AsmOperandClass {
-      let Name = prefix # "Imm" # width # suffix;
-      let RenderMethod = "addImmOperands";
-      let DiagnosticType = "Invalid" # Name;
-    }
-
-    class SImmAsmOperand<int width, string suffix = "">
-        : ImmAsmOperand<"S", width, suffix> {
-    }
-
-    def simm8 : Operand<i16> {
-      let ParserMatchClass = SImmAsmOperand<8>;
-    }
-
-続いて命令の「形」を定義します。 `addi` は24bit I形式です。
-
-....
-class CAHPInst24I<bits<8> opcode, dag outs, dag ins, string opcodestr, string argstr>
-: CAHPInst24<outs, ins, opcodestr, argstr> {
-  bits<4> rd;
-  bits<4> rs1;
-  bits<8> imm;
-
-  let Inst{23-16} = imm;
-  let Inst{15-12} = rs1;
-  let Inst{11-8} = rd;
-  let Inst{7-0} = opcode;
-}
-....
-
-最後に、これを用いて `addi` を定義します。
-
-    def ADDI : CAHPInst24I<0b11000011, (outs GPR:$rd), (ins GPR:$rs1, simm8:$imm),
-                           "addi", "$rd, $rs1, $imm">;
-
-`add` の際には `GPR` とした第三オペランドが `simm8` となっています。
-これによって、この部分に符号付き8bit即値が来ることを指定しています。
-
-即値のうち、下位1bitが0になるものは `_lsb0` というサフィックスを名前につけ区別しておきます。
-`uimm7_lsb0` と `simm11_lsb0` がそれに当たります。
-後々、{cpp}コードにてこの制限が守られているかをチェックします。
-
-`add2` のような2オペランドの命令を記述する場合、上の方法では問題があります。
+[NOTE]
+====
+（CAHPv3の） `add2` のような2オペランドの命令を記述する場合、上の方法では問題があります。
+// FIXME: RISC-VのC命令を例に出す
 というのも `add2` の第一オペランドは入力であると同時に出力先でもあるためです。
 // FIXME: 要検証：outsとinsに同じレジスタを指定した場合はエラーになる？
 このような場合は次のように `Constraints` フィールドにその旨を記述します。
@@ -511,9 +479,14 @@ class CAHPInst24I<bits<8> opcode, dag outs, dag ins, string opcodestr, string ar
                             "add2", "$rd, $rs">;
     }
 
-なおTableGenでは `let` で囲むレコードが一つの場合は括弧 `{ }` は必要ありません。
+====
+
+[NOTE]
+====
+TableGenでは `let` で囲むレコードが一つの場合は括弧 `{ }` は必要ありません。
 また `let` で外からフィールドを上書きするのと、 `def` の中身に記載するのとで意味は
 変わりません。すなわち、上のコードは次の2通りと意味は異なりません<<llvm-tablegen-langref>>。
+// FIXME: CAHPv3の例をやめてCAHPv4の例か、RISC-Vなどの例にする
 // FIXME: 要検証：本当に意味が変わらないか
 
     let Constraints = "$rd = $rd_w" in
@@ -525,77 +498,85 @@ class CAHPInst24I<bits<8> opcode, dag outs, dag ins, string opcodestr, string ar
       let Constraints = "$rd = $rd_w";
     }
 
+====
+
 必要なTableGenファイルを追加した後、
 これらのTableGenファイルが正しいかどうか `llvm-tblgen` を用いて確認します。
 // FIXME: 要検証：ここで表示されるのは継承を展開したものになっているはず。
 //                どのへんをみて「正しい」と判断するのか。
 
-    $ bin/llvm-tblgen -I ../llvm/lib/Target/CAHP/ -I ../llvm/include/ -I ../llvm/lib/Target/ ../llvm/lib/Target/CAHP/CAHP.td
+  $ bin/llvm-tblgen -I ../llvm/lib/Target/CAHPV4/ -I ../llvm/include/ -I ../llvm/lib/Target/ ../llvm/lib/Target/CAHPV4/CAHPV4.td
 
 // FIXME: 要確認：キーワードfieldがつく場合とつかない場合で意味が異なるか。
 //                観測範囲で言うと多分変わらない。
+
+
+// FIXME: この段落はもう少し冒頭に持ってきたい
+なおTableGenファイル中で使用した `RegisterClass` や `Instruction` などは
+`llvm/include/llvm/Target/Target.td` にてコメントとともに定義されています。
+フィールドの値が何を意味するかわからない場合に参照してください。
 
 === `MCTargetDesc` を追加する
 
 アセンブラ本体の{cpp}コードを作成します。ここでは、
 アセンブリのエンコードからバイナリ生成部分を担当する `MCTargetDesc` ディレクトリを追加し、
 必要なファイルを揃えます。複数のクラスを定義しますが、それらは全て
-`MCTargetDesc/CAHPMCTargetDesc.cpp` にある `LLVMInitializeCAHPTargetMC`
+`MCTargetDesc/CAHPV4MCTargetDesc.cpp` にある `LLVMInitializeCAHPV4TargetMC`
 関数でLLVM coreに登録されます。
 
 定義するクラスは次のとおりです。
 
-* `CAHPMCAsmInfo`
-* `CAHPMCInstrInfo`
-* `CAHPMCRegisterInfo`
-* `CAHPMCSubtargetInfo`
-* `CAHPMCCodeEmitter`
-* `CAHPAsmBackend`
-* `CAHPELFObjectWriter`
+* `CAHPV4MCAsmInfo`
+* `CAHPV4MCInstrInfo`
+* `CAHPV4MCRegisterInfo`
+* `CAHPV4MCSubtargetInfo`
+* `CAHPV4MCCodeEmitter`
+* `CAHPV4AsmBackend`
+* `CAHPV4ELFObjectWriter`
 
 順に説明します。
 
-`CAHPMCAsmInfo` にはアセンブリがどのように表記されるかを主に記述します。
+`CAHPV4MCAsmInfo` にはアセンブリがどのように表記されるかを主に記述します。
 // FIXME: 要確認：とllvm::MCAsmInfoのコメントにも書いてあるんだけど、
 //                の割にCalleeSaveStackSlotSizeとかCodePointerSizeとか指定してて
 //                どういうこっちゃとなる。
-`MCTargetDesc/CAHPMCAsmInfo.{h,cpp}` に記述します。
+`MCTargetDesc/CAHPV4MCAsmInfo.{h,cpp}` に記述します。
 
-`CAHPMCInstrInfo` は先程記述したTableGenファイルから、
-TableGenによって `InitCAHPMCInstrInfo` 関数として自動的に生成されます。
-`CAHPMCTargetDesc.cpp` 内でこれを呼び出して作成します。
+`CAHPV4MCInstrInfo` は先程記述したTableGenファイルから、
+TableGenによって `InitCAHPV4MCInstrInfo` 関数として自動的に生成されます。
+`CAHPV4MCTargetDesc.cpp` 内でこれを呼び出して作成します。
 
-`CAHPMCRegisterInfo` も同様に自動的に生成されます。
-`InitCAHPMCRegisterInfo` 関数を呼び出します。なおこの関数の第二引数には
+`CAHPV4MCRegisterInfo` も同様に自動的に生成されます。
+`InitCAHPV4MCRegisterInfo` 関数を呼び出します。なおこの関数の第二引数には
 関数の戻りアドレスが入るレジスタを指定しますfootnote:[内部で
 `llvm::MCRegisterInfo::InitMCRegisterInfo` <<llvm_doxygen-InitMCRegisterInfo>>
 を呼び出していることからわかります。]。
-CAHPではx0を表す `CAHP::X0` を渡すことになります。
+CAHPV4では `CAHPV4::X1` を渡すことになります。
 // FIXME: 要確認：return addressをスタックに積むx86では `eip` を（x86_64では `rip` を）返している。なぜかは良くわからない。
 
-`CAHPMCSubtargetInfo` も同様に自動生成されます。
-`createCAHPMCSubtargetInfoImpl` を呼び出します。この関数の第二引数には
-`CAHP.td` で `ProcessorModel` として定義したCPUの名前を指定します。
+`CAHPV4MCSubtargetInfo` も同様に自動生成されます。
+`createCAHPV4MCSubtargetInfoImpl` を呼び出します。この関数の第二引数には
+`CAHPV4.td` で `ProcessorModel` として定義したCPUの名前を指定します。
 
-`CAHPMCCodeEmitter` はアセンブリのエンコード作業を行います。
-`MCTargetDesc/CAHPMCCodeEmitter.cpp` に記述します。
+`CAHPV4MCCodeEmitter` はアセンブリのエンコード作業を行います。
+`MCTargetDesc/CAHPV4MCCodeEmitter.cpp` に記述します。
 主要なエンコード処理はTableGenによって自動生成された
-`getBinaryCodeForInstr` を `CAHPMCCodeEmitter::encodeInstruction`
+`getBinaryCodeForInstr` を `CAHPV4MCCodeEmitter::encodeInstruction`
 から呼び出すことによって行われます。
-この関数は `CAHPGenMCCodeEmitter.inc` というファイルに定義されるため、
-これを `MCTargetDesc/CAHPMCCodeEmitter.cpp` 末尾で `#include` しておきます。
+この関数は `CAHPV4GenMCCodeEmitter.inc` というファイルに定義されるため、
+これを `MCTargetDesc/CAHPV4MCCodeEmitter.cpp` 末尾で `#include` しておきます。
 
-`CAHPAsmBackend` にはオブジェクトファイルを作成する際に必要な
+`CAHPV4AsmBackend` にはオブジェクトファイルを作成する際に必要な
 fixupの操作（ `applyFixup` ）や指定バイト数分の無効命令を書き出す処理（ `writeNopData` ）
-などを記述します。 `MCTargetDesc/CAHPAsmBackend.cpp` に記述します。
+などを記述します。 `MCTargetDesc/CAHPV4AsmBackend.cpp` に記述します。
 fixupについては後ほど実装するためここではスタブにしておきます。
 
-`CAHPELFObjectWriter` にはELFファイル（の特にヘッダ）を作成する際に必要な情報を記載します。
-このクラスは `LLVMInitializeCAHPTargetMC` ではなく
-`CAHPAsmBackend` の `createObjectTargetWriter` メンバ関数として紐付けられます。
+`CAHPV4ELFObjectWriter` にはELFファイル（の特にヘッダ）を作成する際に必要な情報を記載します。
+このクラスは `LLVMInitializeCAHPV4TargetMC` ではなく
+`CAHPV4AsmBackend` の `createObjectTargetWriter` メンバ関数として紐付けられます。
 親クラス `MCELFObjectTargetWriter` のコンストラクタに、
-CAHPマシンを表す `ELF::EM_CAHP` と、 `.rel` ではなく `.rela` を使用する旨を示す
-`true` を渡しておきますfootnote:[CAHPマシンの仕様などはこの世に存在しないので、
+CAHPv4マシンを表す `ELF::EM_CAHPV4` と、 `.rel` ではなく `.rela` を使用する旨を示す
+`true` を渡しておきますfootnote:[CAHPv4マシンの仕様などはこの世に存在しないので、
 これらは勝手に決めたものです。]。
 // FIXME: .rel と .rela の説明をする。原則これは歴史的事情で決まっているものなので
 //        どっちでもいい、みたいな話がLLDのコメントだったかELFの仕様書だったかに
@@ -604,21 +585,30 @@ CAHPマシンを表す `ELF::EM_CAHP` と、 `.rel` ではなく `.rela` を使�
 ここではスタブにしておきます。
 
 上記を実装してビルドします。一度使ってみましょう。
+まずテスト用の入力アセンブリファイルを用意します。
+
+  $ cat foo.s
+  add x1, x2, x3
+  add x16, x17, x18
+  sub x1, x2, x3
+  xor x1, x2, x3
+  or x1, x2, x3
+
 LLVMのアセンブラを単体で使う場合は `llvm-mc` というコマンドを使用します。
-次のようにすると `foo.s` というアセンブリファイルをオブジェクトファイルに
-変換できます。
+次のようにすると `foo.s` をオブジェクトファイルに変換できます。
 
     $ bin/llvm-mc -arch=cahp -filetype=obj foo.s
     bin/llvm-mc: error: this target does not support assembly parsing.
 
 このようなエラーメッセージが出れば成功ですfootnote:[失敗した場合は
 assertなどで異常終了し、スタックトレースなどが表示されます。]。
-// FIXME: 要確認：「成功」のときもスタックトレース出た気もする。
-このエラーメッセージはCAHPターゲットがアセンブリのパーズ（構文解析）に対応していない
+このエラーメッセージはCAHPV4ターゲットがアセンブリのパーズ（構文解析）に対応していない
 ことを意味しています。これは次の節で実装します。
 
 [NOTE]
 ====
+// FIXME: 古くなっていないか確認
+// FIXME: 要修正：RV32Kv1のメモからそのまま引っ張ってきたのでめちゃくちゃ。
 RISC-Vの拡張C命令には `add` などレジスタを5bitで指定する命令と、
 `sub` などレジスタを3bitで指定する命令の2種類があります。
 LLVM RISC-Vバックエンドを見ると、
@@ -672,70 +662,69 @@ uint64_t RV32KMCCodeEmitter::RV32KEncodeShiftedGPRCRegisterOperand(
 }
 ....
 
-// FIXME: 要修正：RV32Kv1のメモからそのまま引っ張ってきたのでめちゃくちゃ。
-
 ====
 
-=== `CAHPAsmParser` を追加する
+=== `CAHPV4AsmParser` を追加する
 
-アセンブリのパーズは `CAHPAsmParser` クラスが取り仕切っています。
-新しく `AsmParser` ディレクトリを作成し、その中に `CAHPAsmParser.cpp` を作成して
+アセンブリのパーズは `CAHPV4AsmParser` クラスが取り仕切ります。
+新しく `AsmParser` ディレクトリを作成し、その中に `CAHPV4AsmParser.cpp` を作成して
 パーズ処理を記述します。<<github_riscv-llvm_patch_07>>を参考にします。
 
-`CAHPAsmParser::ParseInstruction` がパーズ処理のエントリポイントです。
-`CAHPAsmParser::parseOperand` や `CAHPAsmParser::parseRegister` ・
-`CAHPAsmParser::parseImmediate` を適宜用いながら、
+`CAHPV4AsmParser::ParseInstruction` がパーズ処理のエントリポイントです。
+`CAHPV4AsmParser::parseOperand` や `CAHPV4AsmParser::parseRegister` ・
+`CAHPV4AsmParser::parseImmediate` を適宜用いながら、
 アセンブリのトークンを切り出し `Operands` に詰め込みますfootnote:[なお以下では
 しばらくの間、命令を表す `add` などの文字列そのものも「オペランド」として扱います。]。
 
-この際にオペランドを表すクラスとして `CAHPOperand` を定義・使用しています。
-オペランドとして現れうるのはレジスタと即値とその他のトークン（命令や括弧文字など）なので
-その旨を記述しますfootnote:[なおラベルなどの識別子がオペランドに来るアセンブリには
+この際にオペランドを表すクラスとして `CAHPV4Operand` を定義・使用しています。
+現在はオペランドとして現れうるのはレジスタと命令などのトークンなので、
+その旨を記述します。即値のオペランドなどは後ほど対応します。
+なおラベルなどの識別子がオペランドに来るアセンブリには
 まだ対応していませんが、後ほど対応する際にはトークンではなく
-即値として対応することになります。]。
-TableGenにて定義・使用した即値を正しく認識するために `isUImm4` や `isSImm11Lsb0` などの
-メンバ関数を定義する必要があります。これらの関数は後述の `MatchInstructionImpl` 内で
-使用されます。
+即値として対応することになります。
 
 切り出されたオペランドのリストを命令としてLLVMに認識させるのは `MatchAndEmitInstruction` で
 行います。具体的には、先程の `Operands` を読み込んで `MCInst` に変換します。
 ただし実際の処理の殆どはTableGenによって自動生成された `MatchInstructionImpl` によって
 行われます。実際に書く必要があるのはこの関数が失敗した場合のエラーメッセージ等です。
 
-`CAHPAsmParser` を実装するとアセンブラが完成します。使ってみましょう。
-// FIXME: 要変更：この例はRV32Kv1のメモから取ったものなのでCAHPではない。
+`CAHPV4AsmParser` を実装するとアセンブラが完成します。使ってみましょう。
 
 ....
+# 先ほどと同じfoo.sを入力として使用します。
 $ cat foo.s
-li x9, 3
-mv x11, x1
-sub x9, x10
-add x8, x1
-nop
+add x1, x2, x3
+add x16, x17, x18
+sub x1, x2, x3
+xor x1, x2, x3
+or x1, x2, x3
 
-$ bin/llvm-mc -arch=rv32k -filetype=obj foo.s | od -tx1z -Ax -v
+$ bin/llvm-mc -arch=cahpv4 -filetype=obj foo.s | od -tx1z -Ax -v
 000000 7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00  >.ELF............<
-000010 01 00 f5 00 01 00 00 00 00 00 00 00 00 00 00 00  >................<
-000020 68 00 00 00 00 00 00 00 34 00 00 00 00 00 28 00  >h.......4.....(.<
-000030 04 00 01 00 8d 44 86 85 89 8c 06 94 01 00 00 00  >.....D..........<
-000040 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
-000050 00 2e 74 65 78 74 00 2e 73 74 72 74 61 62 00 2e  >..text..strtab..<
-000060 73 79 6d 74 61 62 00 00 00 00 00 00 00 00 00 00  >symtab..........<
+000010 01 00 f6 00 01 00 00 00 00 00 00 00 00 00 00 00  >................<
+000020 70 00 00 00 00 00 00 00 34 00 00 00 00 00 28 00  >p.......4.....(.<
+000030 04 00 01 00 08 10 61 00 08 88 50 02 18 10 61 00  >......a...P...a.<
+000040 28 10 61 00 38 10 61 00 00 00 00 00 00 00 00 00  >(.a.8.a.........<
+000050 00 00 00 00 00 00 00 00 00 2e 74 65 78 74 00 2e  >..........text..<
+000060 73 74 72 74 61 62 00 2e 73 79 6d 74 61 62 00 00  >strtab..symtab..<
 000070 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
 000080 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  >................<
-000090 07 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00  >................<
-0000a0 50 00 00 00 17 00 00 00 00 00 00 00 00 00 00 00  >P...............<
-0000b0 01 00 00 00 00 00 00 00 01 00 00 00 01 00 00 00  >................<
-0000c0 06 00 00 00 00 00 00 00 34 00 00 00 0a 00 00 00  >........4.......<
-0000d0 00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00  >................<
-0000e0 0f 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00  >................<
-0000f0 40 00 00 00 10 00 00 00 01 00 00 00 01 00 00 00  >@...............<
-000100 04 00 00 00 10 00 00 00                          >........<
-000108
+000090 00 00 00 00 00 00 00 00 07 00 00 00 03 00 00 00  >................<
+0000a0 00 00 00 00 00 00 00 00 58 00 00 00 17 00 00 00  >........X.......<
+0000b0 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00  >................<
+0000c0 01 00 00 00 01 00 00 00 06 00 00 00 00 00 00 00  >................<
+0000d0 34 00 00 00 14 00 00 00 00 00 00 00 00 00 00 00  >4...............<
+0000e0 04 00 00 00 00 00 00 00 0f 00 00 00 02 00 00 00  >................<
+0000f0 00 00 00 00 00 00 00 00 48 00 00 00 10 00 00 00  >........H.......<
+000100 01 00 00 00 01 00 00 00 04 00 00 00 10 00 00 00  >................<
+000110
 ....
 
-0x34から0x3dにある `8d 44 86 85 89 8c 06 94 01 00` が出力であり、
-正しく生成されていることが分かります。
+0x34から0x3dにある `08 10 61 00 ...` が出力であり、
+正しく生成されていることが分かりますfootnote::[このアセンブリはcahpv4-simのテストと
+同じものになっているので、cahpv4-simのテストと比較することで正しいかを（ある程度）判断できます。]。
+
+== !!!ここより下はまだ書き直されていません!!!
 
 === `CAHPInstPrinter` を実装する
 
@@ -821,6 +810,59 @@ Exit Code: 0
 Testing Time: 0.11s
   Expected Passes    : 2
 ....
+
+=== 即値を扱う命令を追加する
+
+// FIXME: 切り貼りなのでまともな文章にする
+
+続いて即値を用いる命令を見ます。例として `addi` を取り上げます。
+`addi` は8bit符号付き即値をオペランドに取ります。まずこれを定義します。
+
+    class ImmAsmOperand<string prefix, int width, string suffix> : AsmOperandClass {
+      let Name = prefix # "Imm" # width # suffix;
+      let RenderMethod = "addImmOperands";
+      let DiagnosticType = "Invalid" # Name;
+    }
+
+    class SImmAsmOperand<int width, string suffix = "">
+        : ImmAsmOperand<"S", width, suffix> {
+    }
+
+    def simm8 : Operand<i16> {
+      let ParserMatchClass = SImmAsmOperand<8>;
+    }
+
+続いて命令の「形」を定義します。 `addi` は24bit I形式です。
+
+....
+class CAHPV4Inst24I<bits<8> opcode, dag outs, dag ins, string opcodestr, string argstr>
+: CAHPV4Inst24<outs, ins, opcodestr, argstr> {
+  bits<4> rd;
+  bits<4> rs1;
+  bits<8> imm;
+
+  let Inst{23-16} = imm;
+  let Inst{15-12} = rs1;
+  let Inst{11-8} = rd;
+  let Inst{7-0} = opcode;
+}
+....
+
+最後に、これを用いて `addi` を定義します。
+
+    def ADDI : CAHPV4Inst24I<0b11000011, (outs GPR:$rd), (ins GPR:$rs1, simm8:$imm),
+                           "addi", "$rd, $rs1, $imm">;
+
+`add` の際には `GPR` とした第三オペランドが `simm8` となっています。
+これによって、この部分に符号付き8bit即値が来ることを指定しています。
+
+即値のうち、下位1bitが0になるものは `_lsb0` というサフィックスを名前につけ区別しておきます。
+`uimm7_lsb0` と `simm11_lsb0` がそれに当たります。
+後々、{cpp}コードにてこの制限が守られているかをチェックします。
+
+TableGenにて定義・使用した即値を正しく認識するために `isUImm4` や `isSImm11Lsb0` などの
+メンバ関数を定義する必要があります。これらの関数は後述の `MatchInstructionImpl` 内で
+使用されます。
 
 === メモリ演算を追加する
 
