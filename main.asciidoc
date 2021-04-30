@@ -125,8 +125,8 @@ RegStateやframe index・register scavengerなどの説明が貴重。
 にて指摘されているように、商業的に成功しなかったバックエンドほどコードが単純で分かりやすい。]。
 * Sparc
 ** <<llvm-writing_backend>>でも説明に使われており、コメントが豊富。
-* NEC SX-Aurora VE
-** 最近（2019年）追加された<<llvm_phabricator-d69103>>バックエンド。新し目のLLVMにバックエンドを追加する例として貴重。
+* M68k<<llvm_phabricator-d95315>>
+** 最近（2021年）追加された<<llvm_phabricator-d95315>>バックエンド。新し目のLLVMにバックエンドを追加する例として貴重。
 * C-SKY<<github_csky>>
 ** 最近（2020年）追加された<<llvm_phabricator-d86269>>バックエンド。新し目のLLVMにバックエンドを追加する例として貴重。
 * x86
@@ -721,56 +721,61 @@ $ bin/llvm-mc -arch=cahpv4 -filetype=obj foo.s | od -tx1z -Ax -v
 ....
 
 0x34から0x3dにある `08 10 61 00 ...` が出力であり、
-正しく生成されていることが分かりますfootnote::[このアセンブリはcahpv4-simのテストと
+正しく生成されていることが分かりますfootnote:[このアセンブリはcahpv4-simのテストと
 同じものになっているので、cahpv4-simのテストと比較することで正しいかを（ある程度）判断できます。]。
 
-== !!!ここより下はまだ書き直されていません!!!
+=== `CAHPV4InstPrinter` を実装する
 
-=== `CAHPInstPrinter` を実装する
-
-https://github.com/virtualsecureplatform/llvm-cahp/commit/aa66568c3dfe1d80a83a96bd0437a26fdb96872a[aa66568c3dfe1d80a83a96bd0437a26fdb96872a]
+https://github.com/virtualsecureplatform/llvm-cahp/commit/bc9465e32f41842ea6cc5796f166fe594635c830[bc9465e32f41842ea6cc5796f166fe594635c830]
 
 次の節では、上記までで作成したアセンブラのテストを記述します。
 その際、アセンブリを `MCInst` に変換した上でそれをアセンブリに逆変換したものが、
 もとのアセンブリと同じであるか否かをチェックします。
 このテストを行うためには `MCInst` からアセンブリを得るための仕組みが必要です。
-この節ではこれを行う `CAHPInstPrinter` クラスを実装します。
+この節ではこれを行う `CAHPV4InstPrinter` クラスを実装します。
 <<github_riscv-llvm_patch_08>>を参考にします。
 
-`InstPrinter` ディレクトリを作成し `InstPrinter/CAHPInstPrinter.{cpp,h}` を作成します。
-命令印字処理の本体は `CAHPInstPrinter::printInst` ですが、
-そのほとんどの処理は `CAHPInstPrinter::printInstruction` というTableGenが生成する
-メンバ関数により実行されます。 `CAHPInstPrinter::printRegName` はレジスタ名を
-出力する関数で `CAHPInstPrinter::printOperand` から呼ばれますが、
-これも `CAHPInstPrinter::getRegisterName` という自動生成された
-メンバ関数に処理を移譲します。この `CAHPInstPrinter::getRegisterName` の第二引数に
-何も渡さなければ（デフォルト引数 `CAHP::ABIRegAltName` を利用すれば）
-TableGenで定義したAltNameが出力に使用されますfootnote:[この場合
+`InstPrinter` ディレクトリを作成し `MCTargetDesc/CAHPV4InstPrinter.{cpp,h}` を作成します。
+命令印字処理の本体は `CAHPV4InstPrinter::printInst` ですが、
+そのほとんどの処理は `CAHPV4InstPrinter::printInstruction` というTableGenが生成する
+メンバ関数により実行されます。 `CAHPV4InstPrinter::printRegName` はレジスタ名を
+出力する関数で `CAHPV4InstPrinter::printOperand` から呼ばれますが、
+これも `CAHPV4InstPrinter::getRegisterName` という自動生成された
+メンバ関数に処理を移譲します。この `CAHPV4InstPrinter::getRegisterName` の第二引数に
+ `CAHPV4::ABIRegAltName` を渡すと、TableGenで定義したAltNameが出力に使用されますfootnote:[この場合
 `AltNames` が指定されていないレジスタ（条件分岐のためのフラグなど）があるとエラーとなります。
 アセンブリ中に表示され得ないレジスタにもダミーの名前をつける必要があります。]。
 // FIXME: 要調査：x86のEFLAGSの名前取っ払ったらエラーになるのか？
-`CAHP::NoRegAltName` を渡すと本来の名前（CAHPでは `x0` 〜 `x15` ）が使用されます。
+`CAHPV4::NoRegAltName` を渡すと本来の名前（CAHPV4では `x0` 〜 `x32` ）が使用されます。
 
-`CAHPInstPrinter` クラスは `MCTargetDesc/CAHPMCTargetDesc.cpp` にて作成・登録されます。
+`CAHPV4InstPrinter` クラスは `MCTargetDesc/CAHPV4MCTargetDesc.cpp` にて作成・登録されます。
 
 節の冒頭で説明した「アセンブリを `MCInst` に変換した上でそれをアセンブリに逆変換」は
 `llvm-mc` の `-show-encoding` オプションを用いて行うことができます。
 `-show-encoding` を指定することよって当該アセンブリがどのような機械語に
 翻訳されるか確認することができます。
-// FIXME: 要修正：RV32KのものなのでCAHPではない。
+// FIXME: 要修正：RV32KのものなのでCAHPV4ではない。
 
 ....
-$ cat foo.s
-// FIXME
-
-$ bin/llvm-mc -arch=rv32k -show-encoding foo.s
-    .text
-    li	x9, 3                   # encoding: [0x8d,0x44]
-    mv	x11, x1                 # encoding: [0x86,0x85]
-    sub	x9, x10                 # encoding: [0x89,0x8c]
-    add	x8, x1                  # encoding: [0x06,0x94]
-    nop	                        # encoding: [0x01,0x00]
+# 前の節と同じfoo.sを使用
+$ bin/llvm-mc -arch=cahpv4 -show-encoding foo.s
+	.text
+	add	x1, x2, x3                      # encoding: [0x08,0x10,0x61,0x00]
+	add	x16, x17, x18                   # encoding: [0x08,0x88,0x50,0x02]
+	sub	x1, x2, x3                      # encoding: [0x18,0x10,0x61,0x00]
+	xor	x1, x2, x3                      # encoding: [0x28,0x10,0x61,0x00]
+	or	x1, x2, x3                      # encoding: [0x38,0x10,0x61,0x00]
 ....
+
+[NOTE]
+====
+`InstPrinter` は、以前はそれ専用のディレクトリを作成してコードを記述していましたが、
+バックエンドによっては不都合があるということで `MCTargetDesc` ディレクトリに配置する形に
+変更されました<<github_llvm_00ecf67045231743ef58950f3d3f4fbe450b8e0a>>。
+
+====
+
+== !!!ここより下はまだ書き直されていません!!!
 
 === テストを書く
 
