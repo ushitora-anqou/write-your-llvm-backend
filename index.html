@@ -473,11 +473,11 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#_tablegenファイルを追加する">TableGenファイルを追加する</a></li>
 <li><a href="#_mctargetdesc_を追加する"><code>MCTargetDesc</code> を追加する</a></li>
 <li><a href="#_cahpv4asmparser_を追加する"><code>CAHPV4AsmParser</code> を追加する</a></li>
+<li><a href="#_cahpv4instprinter_を実装する"><code>CAHPV4InstPrinter</code> を実装する</a></li>
 </ul>
 </li>
 <li><a href="#_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</a>
 <ul class="sectlevel2">
-<li><a href="#_cahpinstprinter_を実装する"><code>CAHPInstPrinter</code> を実装する</a></li>
 <li><a href="#_テストを書く">テストを書く</a></li>
 <li><a href="#_即値を扱う命令を追加する">即値を扱う命令を追加する</a></li>
 <li><a href="#_メモリ演算を追加する">メモリ演算を追加する</a></li>
@@ -918,11 +918,11 @@ RegStateやframe index・register scavengerなどの説明が貴重。</p>
 </div>
 </li>
 <li>
-<p>NEC SX-Aurora VE</p>
+<p>M68k<a href="#llvm_phabricator-d95315">[170]</a></p>
 <div class="ulist">
 <ul>
 <li>
-<p>最近（2019年）追加された<a href="#llvm_phabricator-d69103">[168]</a>バックエンド。新し目のLLVMにバックエンドを追加する例として貴重。</p>
+<p>最近（2021年）追加された<a href="#llvm_phabricator-d95315">[170]</a>バックエンド。新し目のLLVMにバックエンドを追加する例として貴重。</p>
 </li>
 </ul>
 </div>
@@ -1696,42 +1696,35 @@ $ bin/llvm-mc -arch=cahpv4 -filetype=obj foo.s | od -tx1z -Ax -v
 </div>
 <div class="paragraph">
 <p>0x34から0x3dにある <code>08 10 61 00 &#8230;&#8203;</code> が出力であり、
-正しく生成されていることが分かりますfootnote::[このアセンブリはcahpv4-simのテストと
-同じものになっているので、cahpv4-simのテストと比較することで正しいかを（ある程度）判断できます。]。</p>
+正しく生成されていることが分かります<sup class="footnote">[<a id="_footnoteref_11" class="footnote" href="#_footnotedef_11" title="View footnote.">11</a>]</sup>。</p>
 </div>
 </div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</h2>
-<div class="sectionbody">
 <div class="sect2">
-<h3 id="_cahpinstprinter_を実装する"><code>CAHPInstPrinter</code> を実装する</h3>
+<h3 id="_cahpv4instprinter_を実装する"><code>CAHPV4InstPrinter</code> を実装する</h3>
 <div class="paragraph">
-<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/aa66568c3dfe1d80a83a96bd0437a26fdb96872a">aa66568c3dfe1d80a83a96bd0437a26fdb96872a</a></p>
+<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/bc9465e32f41842ea6cc5796f166fe594635c830">bc9465e32f41842ea6cc5796f166fe594635c830</a></p>
 </div>
 <div class="paragraph">
 <p>次の節では、上記までで作成したアセンブラのテストを記述します。
 その際、アセンブリを <code>MCInst</code> に変換した上でそれをアセンブリに逆変換したものが、
 もとのアセンブリと同じであるか否かをチェックします。
 このテストを行うためには <code>MCInst</code> からアセンブリを得るための仕組みが必要です。
-この節ではこれを行う <code>CAHPInstPrinter</code> クラスを実装します。
+この節ではこれを行う <code>CAHPV4InstPrinter</code> クラスを実装します。
 <a href="#github_riscv-llvm_patch_08">[20]</a>を参考にします。</p>
 </div>
 <div class="paragraph">
-<p><code>InstPrinter</code> ディレクトリを作成し <code>InstPrinter/CAHPInstPrinter.{cpp,h}</code> を作成します。
-命令印字処理の本体は <code>CAHPInstPrinter::printInst</code> ですが、
-そのほとんどの処理は <code>CAHPInstPrinter::printInstruction</code> というTableGenが生成する
-メンバ関数により実行されます。 <code>CAHPInstPrinter::printRegName</code> はレジスタ名を
-出力する関数で <code>CAHPInstPrinter::printOperand</code> から呼ばれますが、
-これも <code>CAHPInstPrinter::getRegisterName</code> という自動生成された
-メンバ関数に処理を移譲します。この <code>CAHPInstPrinter::getRegisterName</code> の第二引数に
-何も渡さなければ（デフォルト引数 <code>CAHP::ABIRegAltName</code> を利用すれば）
-TableGenで定義したAltNameが出力に使用されます<sup class="footnote">[<a id="_footnoteref_11" class="footnote" href="#_footnotedef_11" title="View footnote.">11</a>]</sup>。
-<code>CAHP::NoRegAltName</code> を渡すと本来の名前（CAHPでは <code>x0</code> 〜 <code>x15</code> ）が使用されます。</p>
+<p><code>InstPrinter</code> ディレクトリを作成し <code>MCTargetDesc/CAHPV4InstPrinter.{cpp,h}</code> を作成します。
+命令印字処理の本体は <code>CAHPV4InstPrinter::printInst</code> ですが、
+そのほとんどの処理は <code>CAHPV4InstPrinter::printInstruction</code> というTableGenが生成する
+メンバ関数により実行されます。 <code>CAHPV4InstPrinter::printRegName</code> はレジスタ名を
+出力する関数で <code>CAHPV4InstPrinter::printOperand</code> から呼ばれますが、
+これも <code>CAHPV4InstPrinter::getRegisterName</code> という自動生成された
+メンバ関数に処理を移譲します。この <code>CAHPV4InstPrinter::getRegisterName</code> の第二引数に
+ <code>CAHPV4::ABIRegAltName</code> を渡すと、TableGenで定義したAltNameが出力に使用されます<sup class="footnote">[<a id="_footnoteref_12" class="footnote" href="#_footnotedef_12" title="View footnote.">12</a>]</sup>。
+<code>CAHPV4::NoRegAltName</code> を渡すと本来の名前（CAHPV4では <code>x0</code> 〜 <code>x32</code> ）が使用されます。</p>
 </div>
 <div class="paragraph">
-<p><code>CAHPInstPrinter</code> クラスは <code>MCTargetDesc/CAHPMCTargetDesc.cpp</code> にて作成・登録されます。</p>
+<p><code>CAHPV4InstPrinter</code> クラスは <code>MCTargetDesc/CAHPV4MCTargetDesc.cpp</code> にて作成・登録されます。</p>
 </div>
 <div class="paragraph">
 <p>節の冒頭で説明した「アセンブリを <code>MCInst</code> に変換した上でそれをアセンブリに逆変換」は
@@ -1741,19 +1734,38 @@ TableGenで定義したAltNameが出力に使用されます<sup class="footnote
 </div>
 <div class="literalblock">
 <div class="content">
-<pre>$ cat foo.s
-// FIXME
-
-$ bin/llvm-mc -arch=rv32k -show-encoding foo.s
-    .text
-    li	x9, 3                   # encoding: [0x8d,0x44]
-    mv	x11, x1                 # encoding: [0x86,0x85]
-    sub	x9, x10                 # encoding: [0x89,0x8c]
-    add	x8, x1                  # encoding: [0x06,0x94]
-    nop	                        # encoding: [0x01,0x00]</pre>
+<pre># 前の節と同じfoo.sを使用
+$ bin/llvm-mc -arch=cahpv4 -show-encoding foo.s
+	.text
+	add	x1, x2, x3                      # encoding: [0x08,0x10,0x61,0x00]
+	add	x16, x17, x18                   # encoding: [0x08,0x88,0x50,0x02]
+	sub	x1, x2, x3                      # encoding: [0x18,0x10,0x61,0x00]
+	xor	x1, x2, x3                      # encoding: [0x28,0x10,0x61,0x00]
+	or	x1, x2, x3                      # encoding: [0x38,0x10,0x61,0x00]</pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><code>InstPrinter</code> は、以前はそれ専用のディレクトリを作成してコードを記述していましたが、
+バックエンドによっては不都合があるということで <code>MCTargetDesc</code> ディレクトリに配置する形に
+変更されました<a href="#github_llvm_00ecf67045231743ef58950f3d3f4fbe450b8e0a">[171]</a>。</p>
+</div>
+</td>
+</tr>
+</table>
 </div>
 </div>
 </div>
+</div>
+<div class="sect1">
+<h2 id="_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</h2>
+<div class="sectionbody">
 <div class="sect2">
 <h3 id="_テストを書く">テストを書く</h3>
 <div class="paragraph">
@@ -1965,7 +1977,7 @@ $ bin/llvm-mc -filetype=obj -triple=rv32k &lt; test.s | bin/llvm-objdump -d -</p
 </div>
 <div class="paragraph">
 <p>これを修正するためには <code>lwsp</code> や <code>swsp</code> に含まれる即値のDecoderが呼ばれたときをフックし、
-<code>sp</code> のオペランドが必要ならばこれを補えばよい<sup class="footnote">[<a id="_footnoteref_12" class="footnote" href="#_footnotedef_12" title="View footnote.">12</a>]</sup>。
+<code>sp</code> のオペランドが必要ならばこれを補えばよい<sup class="footnote">[<a id="_footnoteref_13" class="footnote" href="#_footnotedef_13" title="View footnote.">13</a>]</sup>。
 この関数を <code>addImplySP</code> という名前で実装する。ここで即値をオペランドに追加するために呼ぶ
 <code>Inst.addOperand</code> と <code>addImplySP</code> の呼び出しの順序に注意が必要である。
 すなわち <code>LWSP</code> を <code>CAHPInstrInfo.td</code> で定義したときのオペランドの順序で呼ばなければ
@@ -2735,6 +2747,12 @@ $ bin/llvm-mc -filetype=obj -triple=rv32k &lt; test.s | bin/llvm-objdump -d -</p
 <li>
 <p><a id="llvm_phabricator-rG9218ff50f93085d0a16a974db28ca8f14bc66f64"></a>[169] <a href="https://reviews.llvm.org/rG9218ff50f93085d0a16a974db28ca8f14bc66f64" class="bare">https://reviews.llvm.org/rG9218ff50f93085d0a16a974db28ca8f14bc66f64</a></p>
 </li>
+<li>
+<p><a id="llvm_phabricator-d95315"></a>[170] <a href="https://reviews.llvm.org/D95315" class="bare">https://reviews.llvm.org/D95315</a></p>
+</li>
+<li>
+<p><a id="github_llvm_00ecf67045231743ef58950f3d3f4fbe450b8e0a"></a>[171] <a href="https://github.com/llvm/llvm-project/commit/00ecf67045231743ef58950f3d3f4fbe450b8e0a" class="bare">https://github.com/llvm/llvm-project/commit/00ecf67045231743ef58950f3d3f4fbe450b8e0a</a></p>
+</li>
 </ul>
 </div>
 </div>
@@ -2773,15 +2791,18 @@ $ bin/llvm-mc -filetype=obj -triple=rv32k &lt; test.s | bin/llvm-objdump -d -</p
 <a href="#_footnoteref_10">10</a>. なお以下では しばらくの間、命令を表す <code>add</code> などの文字列そのものも「オペランド」として扱います。
 </div>
 <div class="footnote" id="_footnotedef_11">
-<a href="#_footnoteref_11">11</a>. この場合 <code>AltNames</code> が指定されていないレジスタ（条件分岐のためのフラグなど）があるとエラーとなります。 アセンブリ中に表示され得ないレジスタにもダミーの名前をつける必要があります。
+<a href="#_footnoteref_11">11</a>. このアセンブリはcahpv4-simのテストと 同じものになっているので、cahpv4-simのテストと比較することで正しいかを（ある程度）判断できます。
 </div>
 <div class="footnote" id="_footnotedef_12">
-<a href="#_footnoteref_12">12</a>. この実装手法はRISC Vのそれによる。かなりad-hocだと感じるが、他の方法が分からないのでとりあえず真似る。
+<a href="#_footnoteref_12">12</a>. この場合 <code>AltNames</code> が指定されていないレジスタ（条件分岐のためのフラグなど）があるとエラーとなります。 アセンブリ中に表示され得ないレジスタにもダミーの名前をつける必要があります。
+</div>
+<div class="footnote" id="_footnotedef_13">
+<a href="#_footnoteref_13">13</a>. この実装手法はRISC Vのそれによる。かなりad-hocだと感じるが、他の方法が分からないのでとりあえず真似る。
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2021-04-29 07:14:36 UTC
+Last updated 2021-04-30 06:42:08 UTC
 </div>
 </div>
 <script type="text/x-mathjax-config">
