@@ -474,11 +474,11 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#_mctargetdesc_を追加する"><code>MCTargetDesc</code> を追加する</a></li>
 <li><a href="#_cahpv4asmparser_を追加する"><code>CAHPV4AsmParser</code> を追加する</a></li>
 <li><a href="#_cahpv4instprinter_を実装する"><code>CAHPV4InstPrinter</code> を実装する</a></li>
+<li><a href="#_テストを書く">テストを書く</a></li>
 </ul>
 </li>
 <li><a href="#_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</a>
 <ul class="sectlevel2">
-<li><a href="#_テストを書く">テストを書く</a></li>
 <li><a href="#_即値を扱う命令を追加する">即値を扱う命令を追加する</a></li>
 <li><a href="#_メモリ演算を追加する">メモリ演算を追加する</a></li>
 <li><a href="#_フィールドを詳細に指定する">フィールドを詳細に指定する</a></li>
@@ -1761,15 +1761,10 @@ $ bin/llvm-mc -arch=cahpv4 -show-encoding foo.s
 </table>
 </div>
 </div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</h2>
-<div class="sectionbody">
 <div class="sect2">
 <h3 id="_テストを書く">テストを書く</h3>
 <div class="paragraph">
-<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/c8bbf894c7ba046ddd3f55677f2d4512dd944aa0">c8bbf894c7ba046ddd3f55677f2d4512dd944aa0</a></p>
+<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/85b79d9939982d75e2f13bc27f4847e2c20b5a54">85b79d9939982d75e2f13bc27f4847e2c20b5a54</a></p>
 </div>
 <div class="paragraph">
 <p>前節で動作させた <code>-show-encoding</code> オプションを用いて、
@@ -1777,7 +1772,7 @@ $ bin/llvm-mc -arch=cahpv4 -show-encoding foo.s
 前節と同様にパッチ<a href="#github_riscv-llvm_patch_08">[20]</a>を参考にします。</p>
 </div>
 <div class="paragraph">
-<p>まず <code>test/MC/CAHP</code> ディレクトリを作成し、その中に <code>cahp-valid.s</code> と <code>cahp-invalid.s</code> を
+<p>まず <code>test/MC/CAHPV4</code> ディレクトリを作成し、その中に <code>valid.s</code> と <code>invalid.s</code> を
 作成します。前者で正しいアセンブリが適切に処理されるか、
 後者で誤ったアセンブリに正しくエラーを出力するかを確認します。</p>
 </div>
@@ -1786,30 +1781,37 @@ $ bin/llvm-mc -arch=cahpv4 -show-encoding foo.s
 </div>
 <div class="literalblock">
 <div class="content">
-<pre>$ bin/llvm-lit -as --filter 'RV32K' test
-PASS: LLVM :: MC/RV32K/rv32k-valid.s (1 of 2)
+<pre>$ bin/llvm-lit -as --filter "CAHPV4" test
+PASS: LLVM :: MC/CAHPV4/valid.s (1 of 2)
 Script:
 --
-: 'RUN: at line 1';   /home/anqou/workspace/llvm-project/build/bin/llvm-mc /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-valid.s -triple=rv32k -show-encoding      | /home/anqou/workspace/llvm-project/build/bin/FileCheck -check-prefixes=CHECK,CHECK-INST /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-valid.s
+: 'RUN: at line 1';   /home/anqou/ano/secure_vm/llvm-project/build/bin/llvm-mc /home/anqou/workspace/anqura/ano/secure_vm/llvm-project/llvm/test/MC/CAHPV4/valid.s -triple=cahpv4 -show-encoding      | /home/anqou/ano/secure_vm/llvm-project/build/bin/FileCheck --allow-unused-prefixes=false -check-prefixes=CHECK,CHECK-INST /home/anqou/workspace/anqura/ano/secure_vm/llvm-project/llvm/test/MC/CAHPV4/valid.s
 --
 Exit Code: 0
 
 
 ********************
-PASS: LLVM :: MC/RV32K/rv32k-invalid.s (2 of 2)
+PASS: LLVM :: MC/CAHPV4/invalid.s (2 of 2)
 Script:
 --
-: 'RUN: at line 1';   not /home/anqou/workspace/llvm-project/build/bin/llvm-mc -triple rv32k &lt; /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-invalid.s 2&gt;&amp;1 | /home/anqou/workspace/llvm-project/build/bin/FileCheck /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-invalid.s
+: 'RUN: at line 1';   not /home/anqou/ano/secure_vm/llvm-project/build/bin/llvm-mc -triple cahpv4 &lt; /home/anqou/workspace/anqura/ano/secure_vm/llvm-project/llvm/test/MC/CAHPV4/invalid.s 2&gt;&amp;1 | /home/anqou/ano/secure_vm/llvm-project/build/bin/FileCheck --allow-unused-prefixes=false /home/anqou/workspace/anqura/ano/secure_vm/llvm-project/llvm/test/MC/CAHPV4/invalid.s
 --
 Exit Code: 0
 
 
 ********************
-Testing Time: 0.11s
-  Expected Passes    : 2</pre>
+
+Testing Time: 0.03s
+  Excluded: 41952
+  Passed  :     2</pre>
 </div>
 </div>
 </div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</h2>
+<div class="sectionbody">
 <div class="sect2">
 <h3 id="_即値を扱う命令を追加する">即値を扱う命令を追加する</h3>
 <div class="paragraph">
@@ -2802,7 +2804,7 @@ $ bin/llvm-mc -filetype=obj -triple=rv32k &lt; test.s | bin/llvm-objdump -d -</p
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2021-04-30 06:42:08 UTC
+Last updated 2021-05-01 09:58:10 UTC
 </div>
 </div>
 <script type="text/x-mathjax-config">
