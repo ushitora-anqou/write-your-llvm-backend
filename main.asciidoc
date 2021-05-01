@@ -775,46 +775,47 @@ $ bin/llvm-mc -arch=cahpv4 -show-encoding foo.s
 
 ====
 
-== !!!ここより下はまだ書き直されていません!!!
-
 === テストを書く
 
-https://github.com/virtualsecureplatform/llvm-cahp/commit/c8bbf894c7ba046ddd3f55677f2d4512dd944aa0[c8bbf894c7ba046ddd3f55677f2d4512dd944aa0]
+https://github.com/virtualsecureplatform/llvm-cahp/commit/85b79d9939982d75e2f13bc27f4847e2c20b5a54[85b79d9939982d75e2f13bc27f4847e2c20b5a54]
 
 前節で動作させた `-show-encoding` オプションを用いて、
 アセンブラが正しく動作していることを確認するためのテストを記述します。
 前節と同様にパッチ<<github_riscv-llvm_patch_08>>を参考にします。
 
-まず `test/MC/CAHP` ディレクトリを作成し、その中に `cahp-valid.s` と `cahp-invalid.s` を
+まず `test/MC/CAHPV4` ディレクトリを作成し、その中に `valid.s` と `invalid.s` を
 作成します。前者で正しいアセンブリが適切に処理されるか、
 後者で誤ったアセンブリに正しくエラーを出力するかを確認します。
 
 記述後 `llvm-lit` を用いてテストを行います。
-// FIXME: 要修正：RV32KでなくCAHPのものを。
 
 ....
-$ bin/llvm-lit -as --filter 'RV32K' test
-PASS: LLVM :: MC/RV32K/rv32k-valid.s (1 of 2)
+$ bin/llvm-lit -as --filter "CAHPV4" test
+PASS: LLVM :: MC/CAHPV4/valid.s (1 of 2)
 Script:
 --
-: 'RUN: at line 1';   /home/anqou/workspace/llvm-project/build/bin/llvm-mc /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-valid.s -triple=rv32k -show-encoding      | /home/anqou/workspace/llvm-project/build/bin/FileCheck -check-prefixes=CHECK,CHECK-INST /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-valid.s
+: 'RUN: at line 1';   /home/anqou/ano/secure_vm/llvm-project/build/bin/llvm-mc /home/anqou/workspace/anqura/ano/secure_vm/llvm-project/llvm/test/MC/CAHPV4/valid.s -triple=cahpv4 -show-encoding      | /home/anqou/ano/secure_vm/llvm-project/build/bin/FileCheck --allow-unused-prefixes=false -check-prefixes=CHECK,CHECK-INST /home/anqou/workspace/anqura/ano/secure_vm/llvm-project/llvm/test/MC/CAHPV4/valid.s
 --
 Exit Code: 0
 
 
 ********************
-PASS: LLVM :: MC/RV32K/rv32k-invalid.s (2 of 2)
+PASS: LLVM :: MC/CAHPV4/invalid.s (2 of 2)
 Script:
 --
-: 'RUN: at line 1';   not /home/anqou/workspace/llvm-project/build/bin/llvm-mc -triple rv32k < /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-invalid.s 2>&1 | /home/anqou/workspace/llvm-project/build/bin/FileCheck /data/anqou/workspace/llvm-project/llvm/test/MC/RV32K/rv32k-invalid.s
+: 'RUN: at line 1';   not /home/anqou/ano/secure_vm/llvm-project/build/bin/llvm-mc -triple cahpv4 < /home/anqou/workspace/anqura/ano/secure_vm/llvm-project/llvm/test/MC/CAHPV4/invalid.s 2>&1 | /home/anqou/ano/secure_vm/llvm-project/build/bin/FileCheck --allow-unused-prefixes=false /home/anqou/workspace/anqura/ano/secure_vm/llvm-project/llvm/test/MC/CAHPV4/invalid.s
 --
 Exit Code: 0
 
 
 ********************
-Testing Time: 0.11s
-  Expected Passes    : 2
+
+Testing Time: 0.03s
+  Excluded: 41952
+  Passed  :     2
 ....
+
+== !!!ここより下はまだ書き直されていません!!!
 
 === 即値を扱う命令を追加する
 
