@@ -777,7 +777,7 @@ $ bin/llvm-mc -arch=cahpv4 -show-encoding foo.s
 
 === テストを書く
 
-https://github.com/virtualsecureplatform/llvm-cahp/commit/85b79d9939982d75e2f13bc27f4847e2c20b5a54[85b79d9939982d75e2f13bc27f4847e2c20b5a54]
+https://github.com/virtualsecureplatform/llvm-cahp/commit/964d687f03455d613cb718bc36f62479c2ff2193[964d687f03455d613cb718bc36f62479c2ff2193]
 
 前節で動作させた `-show-encoding` オプションを用いて、
 アセンブラが正しく動作していることを確認するためのテストを記述します。
@@ -815,60 +815,61 @@ Testing Time: 0.03s
   Passed  :     2
 ....
 
-== !!!ここより下はまだ書き直されていません!!!
-
 === 即値を扱う命令を追加する
 
-// FIXME: 切り貼りなのでまともな文章にする
+https://github.com/virtualsecureplatform/llvm-cahp/commit/b12b28fc5a9e544fef657f45ffafb900cdf5e4e0[b12b28fc5a9e544fef657f45ffafb900cdf5e4e0]
 
-続いて即値を用いる命令を見ます。例として `addi` を取り上げます。
-`addi` は8bit符号付き即値をオペランドに取ります。まずこれを定義します。
-
-    class ImmAsmOperand<string prefix, int width, string suffix> : AsmOperandClass {
-      let Name = prefix # "Imm" # width # suffix;
-      let RenderMethod = "addImmOperands";
-      let DiagnosticType = "Invalid" # Name;
-    }
-
-    class SImmAsmOperand<int width, string suffix = "">
-        : ImmAsmOperand<"S", width, suffix> {
-    }
-
-    def simm8 : Operand<i16> {
-      let ParserMatchClass = SImmAsmOperand<8>;
-    }
-
-続いて命令の「形」を定義します。 `addi` は24bit I形式です。
+続いて即値を用いる命令を追加します。例として `addi` を取り上げます。
+`addi` は11bit符号付き即値をオペランドに取ります。まずこれを定義します。
 
 ....
-class CAHPV4Inst24I<bits<8> opcode, dag outs, dag ins, string opcodestr, string argstr>
-: CAHPV4Inst24<outs, ins, opcodestr, argstr> {
-  bits<4> rd;
-  bits<4> rs1;
-  bits<8> imm;
+class ImmAsmOperand<string prefix, int width, string suffix> : AsmOperandClass {
+  let Name = prefix # "Imm" # width # suffix;
+  let RenderMethod = "addImmOperands";
+  let DiagnosticType = "Invalid" # Name;
+}
 
-  let Inst{23-16} = imm;
-  let Inst{15-12} = rs1;
-  let Inst{11-8} = rd;
-  let Inst{7-0} = opcode;
+class SImmAsmOperand<int width, string suffix = "">
+    : ImmAsmOperand<"S", width, suffix> {
+}
+
+def simm11 : Operand<i16> {
+  let ParserMatchClass = SImmAsmOperand<11>;
+}
+....
+
+続いて命令の「形」を定義します。
+
+....
+class CAHPV4InstIS11<bits<11> opcode, dag outs, dag ins, string opcodestr, string argstr>
+: CAHPV4Inst<outs, ins, opcodestr, argstr> {
+  bits<5> rd;
+  bits<5> rs1;
+  bits<11> imm;
+
+  let Inst{31-21} = imm;
+  let Inst{20-16} = rd;
+  let Inst{15-11} = rs1;
+  let Inst{10-0} = opcode;
 }
 ....
 
 最後に、これを用いて `addi` を定義します。
 
-    def ADDI : CAHPV4Inst24I<0b11000011, (outs GPR:$rd), (ins GPR:$rs1, simm8:$imm),
-                           "addi", "$rd, $rs1, $imm">;
+  def ADDI : CAHPV4InstIS11<0b01000001000, (outs GPR:$rd), (ins GPR:$rs1, simm11:$imm),
+                            "addi", "$rd, $rs1, $imm">;
 
-`add` の際には `GPR` とした第三オペランドが `simm8` となっています。
-これによって、この部分に符号付き8bit即値が来ることを指定しています。
+`add` の際には `GPR` とした第三オペランドが `simm11` となっています。
+これによって、この部分に符号付き11bit即値が来ることを指定しています。
 
-即値のうち、下位1bitが0になるものは `_lsb0` というサフィックスを名前につけ区別しておきます。
-`uimm7_lsb0` と `simm11_lsb0` がそれに当たります。
-後々、{cpp}コードにてこの制限が守られているかをチェックします。
-
-TableGenにて定義・使用した即値を正しく認識するために `isUImm4` や `isSImm11Lsb0` などの
+TableGenにて定義・使用した即値を正しく認識するために `isSImm11` などの
 メンバ関数を定義する必要があります。これらの関数は後述の `MatchInstructionImpl` 内で
 使用されます。
+
+// FIXME: 16-bit immediateをsignedとするかunsignedとするか。とりあえずsignedとしているが、
+// それはそれとして0xFFFFって書きたい
+
+== !!!ここより下はまだ書き直されていません!!!
 
 === メモリ演算を追加する
 
@@ -890,6 +891,10 @@ CAHPアセンブリ中ではメモリは即値とレジスタの組み合わせ�
 
 ここで `${imm}` と括弧でくくっているのは、単に `$imm(` とかくと `imm(` という識別子として
 認識されてしまうためです。
+
+即値のうち、下位1bitが0になるものは `_lsb0` というサフィックスを名前につけ区別しておきます。
+`uimm7_lsb0` と `simm11_lsb0` がそれに当たります。
+後々、{cpp}コードにてこの制限が守られているかをチェックします。
 
 次いでこれらのアセンブリをパーズできるように `CAHPAsmParser` に手を加えます。
 `CAHPAsmParser::parseMemOpBaseReg` メンバ関数を定義してメモリ指定のアセンブリである
