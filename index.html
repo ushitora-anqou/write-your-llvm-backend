@@ -293,9 +293,9 @@ ol>li p,ul>li p,ul dd,ol dd,.olist .olist,.ulist .ulist,.ulist .olist,.olist .ul
 ul.checklist,ul.none,ol.none,ul.no-bullet,ol.no-bullet,ol.unnumbered,ul.unstyled,ol.unstyled{list-style-type:none}
 ul.no-bullet,ol.no-bullet,ol.unnumbered{margin-left:.625em}
 ul.unstyled,ol.unstyled{margin-left:0}
-ul.checklist{margin-left:.625em}
-ul.checklist li>p:first-child>.fa-square-o:first-child,ul.checklist li>p:first-child>.fa-check-square-o:first-child{width:1.25em;font-size:.8em;position:relative;bottom:.125em}
-ul.checklist li>p:first-child>input[type="checkbox"]:first-child{margin-right:.25em}
+ul.checklist>li>p:first-child{margin-left:-1em}
+ul.checklist>li>p:first-child>.fa-square-o:first-child,ul.checklist>li>p:first-child>.fa-check-square-o:first-child{width:1.25em;font-size:.8em;position:relative;bottom:.125em}
+ul.checklist>li>p:first-child>input[type="checkbox"]:first-child{margin-right:.25em}
 ul.inline{display:-ms-flexbox;display:-webkit-box;display:flex;-ms-flex-flow:row wrap;-webkit-flex-flow:row wrap;flex-flow:row wrap;list-style:none;margin:0 0 .625em -1.25em}
 ul.inline>li{margin-left:1.25em}
 .unstyled dl dt{font-weight:400;font-style:normal}
@@ -475,11 +475,11 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#_cahpv4asmparser_を追加する"><code>CAHPV4AsmParser</code> を追加する</a></li>
 <li><a href="#_cahpv4instprinter_を実装する"><code>CAHPV4InstPrinter</code> を実装する</a></li>
 <li><a href="#_テストを書く">テストを書く</a></li>
+<li><a href="#_即値を扱う命令を追加する">即値を扱う命令を追加する</a></li>
 </ul>
 </li>
 <li><a href="#_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</a>
 <ul class="sectlevel2">
-<li><a href="#_即値を扱う命令を追加する">即値を扱う命令を追加する</a></li>
 <li><a href="#_メモリ演算を追加する">メモリ演算を追加する</a></li>
 <li><a href="#_フィールドを詳細に指定する">フィールドを詳細に指定する</a></li>
 <li><a href="#_ディスアセンブラを実装する">ディスアセンブラを実装する</a></li>
@@ -593,7 +593,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <p>この文書はGitによって管理されています。
 <a href="https://github.com/ushitora-anqou/write-your-llvm-backend">リポジトリはGitHubにて
 公開しています</a>。同じリポジトリで、この文書を書くにあたってベースとしている
-メモを読むことができます。</p>
+メモ（https://ushitora-anqou.github.io/write-your-llvm-backend/draft-rv32kv1.html[RV32Kv1]・https://ushitora-anqou.github.io/write-your-llvm-backend/draft-rv16kv2.html[RV16Kv2]・https://ushitora-anqou.github.io/write-your-llvm-backend/draft-cahpv3.html[CAHPv3]）を読むことができます。</p>
 </div>
 <div class="paragraph">
 <p>この文書に（おおよそ）則って開発されたLLVMバックエンドのソースコードを
@@ -1764,7 +1764,7 @@ $ bin/llvm-mc -arch=cahpv4 -show-encoding foo.s
 <div class="sect2">
 <h3 id="_テストを書く">テストを書く</h3>
 <div class="paragraph">
-<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/85b79d9939982d75e2f13bc27f4847e2c20b5a54">85b79d9939982d75e2f13bc27f4847e2c20b5a54</a></p>
+<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/964d687f03455d613cb718bc36f62479c2ff2193">964d687f03455d613cb718bc36f62479c2ff2193</a></p>
 </div>
 <div class="paragraph">
 <p>前節で動作させた <code>-show-encoding</code> オプションを用いて、
@@ -1807,16 +1807,14 @@ Testing Time: 0.03s
 </div>
 </div>
 </div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</h2>
-<div class="sectionbody">
 <div class="sect2">
 <h3 id="_即値を扱う命令を追加する">即値を扱う命令を追加する</h3>
 <div class="paragraph">
-<p>続いて即値を用いる命令を見ます。例として <code>addi</code> を取り上げます。
-<code>addi</code> は8bit符号付き即値をオペランドに取ります。まずこれを定義します。</p>
+<p><a href="https://github.com/virtualsecureplatform/llvm-cahp/commit/b12b28fc5a9e544fef657f45ffafb900cdf5e4e0">b12b28fc5a9e544fef657f45ffafb900cdf5e4e0</a></p>
+</div>
+<div class="paragraph">
+<p>続いて即値を用いる命令を追加します。例として <code>addi</code> を取り上げます。
+<code>addi</code> は11bit符号付き即値をオペランドに取ります。まずこれを定義します。</p>
 </div>
 <div class="literalblock">
 <div class="content">
@@ -1824,38 +1822,32 @@ Testing Time: 0.03s
   let Name = prefix # "Imm" # width # suffix;
   let RenderMethod = "addImmOperands";
   let DiagnosticType = "Invalid" # Name;
-}</pre>
-</div>
-</div>
-<div class="literalblock">
-<div class="content">
-<pre>class SImmAsmOperand&lt;int width, string suffix = ""&gt;
+}
+
+class SImmAsmOperand&lt;int width, string suffix = ""&gt;
     : ImmAsmOperand&lt;"S", width, suffix&gt; {
-}</pre>
-</div>
-</div>
-<div class="literalblock">
-<div class="content">
-<pre>def simm8 : Operand&lt;i16&gt; {
-  let ParserMatchClass = SImmAsmOperand&lt;8&gt;;
+}
+
+def simm11 : Operand&lt;i16&gt; {
+  let ParserMatchClass = SImmAsmOperand&lt;11&gt;;
 }</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>続いて命令の「形」を定義します。 <code>addi</code> は24bit I形式です。</p>
+<p>続いて命令の「形」を定義します。</p>
 </div>
 <div class="literalblock">
 <div class="content">
-<pre>class CAHPV4Inst24I&lt;bits&lt;8&gt; opcode, dag outs, dag ins, string opcodestr, string argstr&gt;
-: CAHPV4Inst24&lt;outs, ins, opcodestr, argstr&gt; {
-  bits&lt;4&gt; rd;
-  bits&lt;4&gt; rs1;
-  bits&lt;8&gt; imm;
+<pre>class CAHPV4InstIS11&lt;bits&lt;11&gt; opcode, dag outs, dag ins, string opcodestr, string argstr&gt;
+: CAHPV4Inst&lt;outs, ins, opcodestr, argstr&gt; {
+  bits&lt;5&gt; rd;
+  bits&lt;5&gt; rs1;
+  bits&lt;11&gt; imm;
 
-  let Inst{23-16} = imm;
-  let Inst{15-12} = rs1;
-  let Inst{11-8} = rd;
-  let Inst{7-0} = opcode;
+  let Inst{31-21} = imm;
+  let Inst{20-16} = rd;
+  let Inst{15-11} = rs1;
+  let Inst{10-0} = opcode;
 }</pre>
 </div>
 </div>
@@ -1864,25 +1856,25 @@ Testing Time: 0.03s
 </div>
 <div class="literalblock">
 <div class="content">
-<pre>def ADDI : CAHPV4Inst24I&lt;0b11000011, (outs GPR:$rd), (ins GPR:$rs1, simm8:$imm),
-                       "addi", "$rd, $rs1, $imm"&gt;;</pre>
+<pre>def ADDI : CAHPV4InstIS11&lt;0b01000001000, (outs GPR:$rd), (ins GPR:$rs1, simm11:$imm),
+                          "addi", "$rd, $rs1, $imm"&gt;;</pre>
 </div>
 </div>
 <div class="paragraph">
-<p><code>add</code> の際には <code>GPR</code> とした第三オペランドが <code>simm8</code> となっています。
-これによって、この部分に符号付き8bit即値が来ることを指定しています。</p>
+<p><code>add</code> の際には <code>GPR</code> とした第三オペランドが <code>simm11</code> となっています。
+これによって、この部分に符号付き11bit即値が来ることを指定しています。</p>
 </div>
 <div class="paragraph">
-<p>即値のうち、下位1bitが0になるものは <code>_lsb0</code> というサフィックスを名前につけ区別しておきます。
-<code>uimm7_lsb0</code> と <code>simm11_lsb0</code> がそれに当たります。
-後々、C&#43;&#43;コードにてこの制限が守られているかをチェックします。</p>
-</div>
-<div class="paragraph">
-<p>TableGenにて定義・使用した即値を正しく認識するために <code>isUImm4</code> や <code>isSImm11Lsb0</code> などの
+<p>TableGenにて定義・使用した即値を正しく認識するために <code>isSImm11</code> などの
 メンバ関数を定義する必要があります。これらの関数は後述の <code>MatchInstructionImpl</code> 内で
 使用されます。</p>
 </div>
 </div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_ここより下はまだ書き直されていません">!!!ここより下はまだ書き直されていません!!!</h2>
+<div class="sectionbody">
 <div class="sect2">
 <h3 id="_メモリ演算を追加する">メモリ演算を追加する</h3>
 <div class="paragraph">
@@ -1909,6 +1901,11 @@ CAHPアセンブリ中ではメモリは即値とレジスタの組み合わせ�
 <div class="paragraph">
 <p>ここで <code>${imm}</code> と括弧でくくっているのは、単に <code>$imm(</code> とかくと <code>imm(</code> という識別子として
 認識されてしまうためです。</p>
+</div>
+<div class="paragraph">
+<p>即値のうち、下位1bitが0になるものは <code>_lsb0</code> というサフィックスを名前につけ区別しておきます。
+<code>uimm7_lsb0</code> と <code>simm11_lsb0</code> がそれに当たります。
+後々、C&#43;&#43;コードにてこの制限が守られているかをチェックします。</p>
 </div>
 <div class="paragraph">
 <p>次いでこれらのアセンブリをパーズできるように <code>CAHPAsmParser</code> に手を加えます。
@@ -2804,7 +2801,7 @@ $ bin/llvm-mc -filetype=obj -triple=rv32k &lt; test.s | bin/llvm-objdump -d -</p
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2021-05-01 09:58:10 UTC
+Last updated 2021-05-03 12:31:59 UTC
 </div>
 </div>
 <script type="text/x-mathjax-config">
