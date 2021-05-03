@@ -23,7 +23,7 @@ AsciiDocのコメントを用いて文中にFIXMEを仕込む。
 この文書はGitによって管理されています。
 https://github.com/ushitora-anqou/write-your-llvm-backend[リポジトリはGitHubにて
 公開しています]。同じリポジトリで、この文書を書くにあたってベースとしている
-メモを読むことができます。
+メモ（https://ushitora-anqou.github.io/write-your-llvm-backend/draft-rv32kv1.html[RV32Kv1]・https://ushitora-anqou.github.io/write-your-llvm-backend/draft-rv16kv2.html[RV16Kv2]・https://ushitora-anqou.github.io/write-your-llvm-backend/draft-cahpv3.html[CAHPv3]）を読むことができます。
 
 この文書に（おおよそ）則って開発されたLLVMバックエンドのソースコードを
 https://github.com/virtualsecureplatform/llvm-cahp[GitHubリポジトリにて公開しています]。
