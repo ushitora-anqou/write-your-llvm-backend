@@ -154,13 +154,13 @@ LLVMに追加します。
 
 まずLLVMのソースコードをGitを用いて取得します。
 前述したように、今回の開発ではLLVM v12.0.0をベースとします。
-そこでブランチ `llvmorg-12.0.0` から独自実装のためのブランチ `cahpv4` を生成し、
+そこでタグ `llvmorg-12.0.0` から独自実装のためのブランチ `cahpv4` を生成し、
 以降の開発はこのブランチ上で行うことにします。
 
     $ git clone https://github.com/llvm/llvm-project.git
     $ cd llvm-project
-    $ git switch llvmorg-12.0.0
-    $ git checkout -b cahpv4
+    $ git checkout llvmorg-12.0.0
+    $ git switch -c cahpv4
 
 === CAHPv4をTripleに追加する
 
