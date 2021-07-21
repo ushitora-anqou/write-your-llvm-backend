@@ -738,7 +738,7 @@ https://github.com/virtualsecureplatform/llvm-cahp/commit/bc9465e32f41842ea6cc57
 この節ではこれを行う `CAHPV4InstPrinter` クラスを実装します。
 <<github_riscv-llvm_patch_08>>を参考にします。
 
-`InstPrinter` ディレクトリを作成し `MCTargetDesc/CAHPV4InstPrinter.{cpp,h}` を作成します。
+`MCTargetDesc/CAHPV4InstPrinter.{cpp,h}` を作成します。
 命令印字処理の本体は `CAHPV4InstPrinter::printInst` ですが、
 そのほとんどの処理は `CAHPV4InstPrinter::printInstruction` というTableGenが生成する
 メンバ関数により実行されます。 `CAHPV4InstPrinter::printRegName` はレジスタ名を
