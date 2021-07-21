@@ -1716,7 +1716,7 @@ $ bin/llvm-mc -arch=cahpv4 -filetype=obj foo.s | od -tx1z -Ax -v
 <a href="#github_riscv-llvm_patch_08">[20]</a>を参考にします。</p>
 </div>
 <div class="paragraph">
-<p><code>InstPrinter</code> ディレクトリを作成し <code>MCTargetDesc/CAHPV4InstPrinter.{cpp,h}</code> を作成します。
+<p><code>MCTargetDesc/CAHPV4InstPrinter.{cpp,h}</code> を作成します。
 命令印字処理の本体は <code>CAHPV4InstPrinter::printInst</code> ですが、
 そのほとんどの処理は <code>CAHPV4InstPrinter::printInstruction</code> というTableGenが生成する
 メンバ関数により実行されます。 <code>CAHPV4InstPrinter::printRegName</code> はレジスタ名を
@@ -2804,7 +2804,7 @@ $ bin/llvm-mc -filetype=obj -triple=rv32k &lt; test.s | bin/llvm-objdump -d -</p
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2021-06-16 05:31:47 UTC
+Last updated 2021-07-21 11:38:50 UTC
 </div>
 </div>
 <script type="text/x-mathjax-config">
